@@ -16,11 +16,10 @@ use Beike\Models\CartProduct;
 use Beike\Repositories\CartRepo;
 use Beike\Shop\Http\Resources\CartDetail;
 use Exception;
+use Plugin\CyberCloak\Services\CatalogCartItemService;
 
 class CartService
 {
-    private static $cartList = null;
-
     /**
      * 获取购物车商品列表
      *
@@ -30,17 +29,19 @@ class CartService
      */
     public static function list($customer, bool $selected = false): array
     {
-        if (self::$cartList !== null) {
-            return self::$cartList;
-        }
-
         $cartBuilder = CartRepo::allCartProductsBuilder($customer->id ?? 0);
         if ($selected) {
             $cartBuilder->where('selected', true);
         }
         $cartItems = $cartBuilder->get();
+        $catalog    = app(CatalogCartItemService::class);
 
-        $cartItems = $cartItems->filter(function ($item) {
+        $cartItems = $cartItems->filter(function ($item) use ($catalog) {
+            if (! $catalog->hydrate($item)) {
+                $item->delete();
+
+                return false;
+            }
             $description = $item->sku->product->description ?? '';
             $product     = $item->product                   ?? null;
             if (empty($description) || empty($product) || ! $product->active) {
@@ -62,7 +63,7 @@ class CartService
 
         $cartList = CartDetail::collection($cartItems)->jsonSerialize();
 
-        return self::$cartList = hook_filter('service.cart.list', $cartList);
+        return hook_filter('service.cart.list', $cartList);
     }
 
     /**
@@ -79,24 +80,48 @@ class CartService
 
         self::validateQuantity($quantity);
 
-        $productId  = $sku->product_id;
-        $skuCode    = $sku->sku;
+        $productId  = (int) $sku->product_id;
+        $skuId      = (int) $sku->getKey();
+        $skuCode    = (string) $sku->sku;
+        $catalog    = app(CatalogCartItemService::class);
+        $mode       = $catalog->currentMode();
+        if (! $catalog->isSellableSku($mode, $sku)) {
+            throw new Exception('当前 SKU 尚未完成展示映射确认，暂不可加入购物车');
+        }
 
         if ($customerId) {
             $builder = CartProduct::query()->where('customer_id', $customerId);
         } else {
             $builder = CartProduct::query()->where('session_id', get_session_id());
         }
-        $cart = $builder->where('product_id', $productId)
-            ->where('product_sku', $skuCode)
+        $catalogBuilder = clone $builder;
+        $cart = $catalogBuilder->where('catalog_mode', $mode)
+            ->where('catalog_product_id', $productId)
+            ->where('catalog_sku_id', $skuId)
             ->first();
+        if (! $cart) {
+            // 兼容迁移前已存在的真实购物车明细。
+            $legacyBuilder = clone $builder;
+            $cart = $legacyBuilder->where(function ($query) use ($mode) {
+                $query->where('catalog_mode', $mode)->orWhereNull('catalog_mode');
+            })->where('product_id', $productId)
+                ->where('product_sku', $skuCode)
+                ->first();
+        }
 
         if ($cart) {
-            if ($cart->quantity + $quantity > $cart->sku->quantity) {
+            if ($cart->quantity + $quantity > $sku->quantity) {
                 throw new Exception(trans('cart.stock_out'));
             }
             $cart->selected = true;
-            $cart->increment('quantity', $quantity);
+            $cart->fill([
+                'catalog_mode'      => $mode,
+                'catalog_product_id' => $productId,
+                'catalog_sku_id'    => $skuId,
+                'fulfillment_sku'   => $catalog->fulfillmentSku($mode, $sku),
+            ]);
+            $cart->quantity += $quantity;
+            $cart->save();
         } else {
             if (count(self::list(current_customer())) >= 500) {
                 throw new Exception(trans('cart.cart_quantity_max_500'));
@@ -106,13 +131,17 @@ class CartService
                 'session_id'     => get_session_id(),
                 'product_id'     => $productId,
                 'product_sku'    => $skuCode,
+                'catalog_mode'   => $mode,
+                'catalog_product_id' => $productId,
+                'catalog_sku_id' => $skuId,
+                'fulfillment_sku' => $catalog->fulfillmentSku($mode, $sku),
                 'quantity'       => $quantity,
                 'selected'       => true,
             ]);
         }
 
         $cartQuantity = $cart->quantity;
-        $skuQuantity  = $cart->sku->quantity;
+        $skuQuantity  = $sku->quantity;
         if ($cartQuantity > $skuQuantity) {
             throw new Exception(trans('cart.stock_out'));
         }
@@ -183,8 +212,14 @@ class CartService
         if (empty($cart)) {
             return;
         }
+        $catalog = app(CatalogCartItemService::class);
+        if (! $catalog->hydrate($cart)) {
+            // 明细来源商品已失效时先删除脏数据，绝不按当前请求模式懒加载并更新。
+            $cart->delete();
+            throw new Exception(trans('cart.stock_out'));
+        }
 
-        if ($quantity > $cart->sku->quantity) {
+        if (! $cart->sku || $quantity > $cart->sku->quantity) {
             throw new Exception(trans('cart.stock_out'));
         }
 

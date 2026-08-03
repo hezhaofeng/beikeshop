@@ -70,7 +70,8 @@ return [
     |
     */
 
-    'middleware'       => ['shop'],
+    // Horizon 不应触发前台 cyberCloak 上下文或写入 beike_context Cookie。
+    'middleware'       => ['horizon'],
 
     /*
     |--------------------------------------------------------------------------

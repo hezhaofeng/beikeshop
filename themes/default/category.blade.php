@@ -43,6 +43,15 @@
           </div>
         @endif
         @hook('category.products.before')
+        {{-- 子分类不依赖当前分类是否有直属商品，避免真实站父分类只含下级分类时被隐藏。 --}}
+        @if ($children)
+          <div class="children-wrap me-2 mb-3 mt-n3">
+            <span class="text-secondary">{{ __('category.children') }}：</span>
+            @foreach ($children as $item)
+            <a href="{{ $item['url'] }}">{{ $item['name'] }}</a>
+            @endforeach
+          </div>
+        @endif
         <div class="filter-value-wrap mb-2 d-none">
           <ul class="list-group list-group-horizontal">
             @foreach ($filter_data['attr'] as $index => $attr)
@@ -60,14 +69,6 @@
 
         @if (count($products_format))
           @include('shared.filter_bar_block')
-          @if ($children)
-            <div class="children-wrap me-2 mb-3 mt-n3">
-              <span class="text-secondary">{{ __('category.children') }}：</span>
-              @foreach ($children as $item)
-              <a href="{{ $item['url'] }}">{{ $item['name'] }}</a>
-              @endforeach
-            </div>
-          @endif
           <div class="row g-3 g-lg-4 {{ request('style_list') == 'list' ? 'product-list-wrap' : ''}}">
             @foreach ($products_format as $product)
               <div class="{{ !request('style_list') || request('style_list') == 'grid' ? 'product-grid col-6 col-md-3' : 'col-12'}}">

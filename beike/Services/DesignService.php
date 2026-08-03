@@ -17,6 +17,7 @@ use Beike\Repositories\BrandRepo;
 use Beike\Repositories\ProductRepo;
 use Beike\Shop\Http\Resources\BrandDetail;
 use Illuminate\Support\Str;
+use Plugin\CyberCloak\Services\CatalogContentMappingService;
 
 class DesignService
 {
@@ -246,9 +247,11 @@ class DesignService
 
         foreach ($tabs as $index => $tab) {
             $tabs[$index]['title'] = $tab['title'][locale()] ?? '';
-            $productsIds           = $tab['products'];
+            $productsIds           = self::mapProductIds($tab['products'] ?? []);
             if ($productsIds) {
                 $tabs[$index]['products'] = ProductRepo::getProductsByIds($productsIds)->jsonSerialize();
+            } else {
+                $tabs[$index]['products'] = [];
             }
         }
         $content['tabs']  = $tabs;
@@ -282,7 +285,8 @@ class DesignService
      */
     private static function handleProducts($content): array
     {
-        $content['products'] = ProductRepo::getProductsByIds($content['products'])->jsonSerialize();
+        $productIds           = self::mapProductIds($content['products'] ?? []);
+        $content['products']  = ProductRepo::getProductsByIds($productIds)->jsonSerialize();
         $content['title']    = $content['title'][locale()] ?? '';
 
         return $content;
@@ -353,8 +357,12 @@ class DesignService
 
         if ($code == 'brand') {
             $content['brands'] = self::sanitizeIds($content['brands'] ?? []);
-        } elseif ($code == 'product') {
+        } elseif (in_array($code, ['product', 'category', 'latest'], true)) {
             $content['products'] = self::sanitizeIds($content['products'] ?? []);
+        } elseif ($code === 'tab_product') {
+            foreach ($content['tabs'] ?? [] as $index => $tab) {
+                $content['tabs'][$index]['products'] = self::sanitizeIds($tab['products'] ?? []);
+            }
         }
 
         $moduleData['content'] = $content;
@@ -368,8 +376,33 @@ class DesignService
             return [];
         }
 
-        return array_values(array_filter(array_map('intval', $ids), function ($id) {
-            return $id > 0;
-        }));
+        $result = [];
+        foreach ($ids as $item) {
+            if (is_array($item)) {
+                $item = $item['id'] ?? 0;
+            }
+
+            $id = (int) $item;
+            if ($id > 0) {
+                $result[] = $id;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * 通过插件映射服务转换首页装修商品；插件未加载时保留原始 ID兼容行为。
+     *
+     * @param mixed $productIds
+     * @return array<int,int>
+     */
+    private static function mapProductIds(mixed $productIds): array
+    {
+        if (! app()->bound(CatalogContentMappingService::class)) {
+            return self::sanitizeIds((array) $productIds);
+        }
+
+        return app(CatalogContentMappingService::class)->mapProductIds($productIds);
     }
 }

@@ -2,11 +2,13 @@
 
 namespace Beike\Models;
 
+use Beike\Models\Concerns\UsesCatalogConnection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class ProductSku extends Base
 {
     use HasFactory;
+    use UsesCatalogConnection;
 
     protected $fillable = ['product_id', 'variants', 'position', 'images', 'model', 'sku', 'price', 'origin_price', 'cost_price', 'weight', 'quantity', 'is_default', 'active'];
 

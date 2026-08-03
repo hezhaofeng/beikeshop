@@ -8,6 +8,7 @@ use Beike\Shop\Http\Resources\ProductDetail;
 use Beike\Shop\Http\Resources\ProductSimple;
 use Illuminate\Http\Request;
 use Plugin\Bestseller\Repositories\ProductRepo as BestsellerProductRepo;
+use Plugin\CyberCloak\Services\StoreContext;
 
 class ProductController extends Controller
 {
@@ -19,7 +20,10 @@ class ProductController extends Controller
      */
     public function show(Request $request, Product $product)
     {
-        $relationIds = $product->relations->pluck('id')->toArray();
+        $context     = app()->bound(StoreContext::class) ? app(StoreContext::class) : null;
+        $relationIds = $context?->isReal()
+            ? $product->relations->pluck('id')->toArray()
+            : [];
         $product     = ProductRepo::getProductDetail($product);
         ProductRepo::viewAdd($product);
 

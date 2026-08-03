@@ -1,0 +1,16 @@
+{
+    "code": "product_position_sort",
+    "name": {
+        "zh_cn": "前台商品位置排序",
+        "en": "Frontend Product Position Sort"
+    },
+    "description": {
+        "zh_cn": "前台分类商品默认按照商品 position 升序展示",
+        "en": "Sort category products by position on the storefront by default"
+    },
+    "type": "feature",
+    "version": "v1.0.0",
+    "author": {
+        "name": "BeikeShop"
+    }
+}

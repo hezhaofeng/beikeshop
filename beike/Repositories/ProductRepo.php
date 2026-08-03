@@ -21,15 +21,17 @@ use Beike\Models\ProductDescription;
 use Beike\Models\ProductRelation;
 use Beike\Models\ProductSku;
 use Beike\Shop\Http\Resources\ProductSimple;
+use Plugin\CyberCloak\Services\StoreContext;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\HigherOrderBuilderProxy;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Plugin\CyberCloak\Services\CatalogCartItemService;
 
 class ProductRepo
 {
-    private static $allProductsWithName;
+    private static $allProductsWithName = [];
 
     private static function getLikeOperator(): string
     {
@@ -44,7 +46,25 @@ class ProductRepo
         if (is_int($product)) {
             $product = Product::query()->findOrFail($product);
         }
-        $product->load('description', 'skus', 'masterSku', 'brand', 'relations');
+        $relations = ['description', 'brand'];
+        if (! self::isPublicCatalog()) {
+            $relations[] = 'skus';
+            $relations[] = 'masterSku';
+            $relations[] = 'relations';
+        } else {
+            // 展示库只导入浏览数据，没有主库的商品关系和属性表。
+            $sellableSkuIds = self::sellableSkuIds();
+            // with() 约束接收 HasMany 关系对象，应避免声明为 Eloquent Builder。
+            $relations['skus'] = fn ($query) => $query->whereIn('product_skus.id', $sellableSkuIds);
+            $relations['masterSku'] = fn ($query) => $query->whereIn('product_skus.id', $sellableSkuIds);
+            $product->setRelation('relations', new Collection);
+            $product->setRelation('attributes', new Collection);
+        }
+        $product->load($relations);
+
+        if (self::isPublicCatalog() && empty($product->masterSku)) {
+            throw (new \Illuminate\Database\Eloquent\ModelNotFoundException)->setModel(Product::class, [$product->getKey()]);
+        }
 
         hook_filter('repo.product.get_detail', $product);
 
@@ -97,7 +117,25 @@ class ProductRepo
         $driver = getDBDriver();
         $likeOperator      = self::getLikeOperator();
 
-        $builder = Product::query()->with(['description', 'skus', 'masterSku', 'attributes', 'brand']);
+        $with = ['description', 'brand'];
+        $sellableSkuIds = self::sellableSkuIds();
+        if (self::isPublicCatalog()) {
+            // 展示商品只能暴露当前已发布版本中有 confirmed 映射的 SKU。
+            // with() 约束接收 HasMany 关系对象，应避免声明为 Eloquent Builder。
+            $with['skus']     = fn ($query) => $query->whereIn('product_skus.id', $sellableSkuIds);
+            $with['masterSku'] = fn ($query) => $query->whereIn('product_skus.id', $sellableSkuIds);
+        } else {
+            $with[] = 'skus';
+            $with[] = 'masterSku';
+        }
+        if (! self::isPublicCatalog()) {
+            $with[] = 'attributes';
+        }
+        $builder = Product::query()->with($with);
+
+        if (self::isPublicCatalog()) {
+            $builder->whereHas('skus', fn (Builder $query) => $query->whereIn('product_skus.id', $sellableSkuIds));
+        }
 
         $builder->leftJoin('product_descriptions as pd', function ($build) {
             $build->whereColumn('pd.product_id', 'products.id')
@@ -116,13 +154,20 @@ class ProductRepo
                     }
                 } else {
                     $categoryId = $filters['category_id'];
-                    $query->whereHas('paths', function ($query) use ($categoryId) {
-                        if (is_array($categoryId)) {
-                            $query->whereIn('path_id', $categoryId);
-                        } else {
-                            $query->where('path_id', $categoryId);
-                        }
-                    });
+                    if (self::isPublicCatalog()) {
+                        // 展示库没有 category_paths，阶段三按直接商品分类关系查询。
+                        is_array($categoryId)
+                            ? $query->whereIn('category_id', $categoryId)
+                            : $query->where('category_id', $categoryId);
+                    } else {
+                        $query->whereHas('paths', function ($query) use ($categoryId) {
+                            if (is_array($categoryId)) {
+                                $query->whereIn('path_id', $categoryId);
+                            } else {
+                                $query->where('path_id', $categoryId);
+                            }
+                        });
+                    }
                 }
 
             });
@@ -154,12 +199,14 @@ class ProductRepo
 
         // attr 格式:attr=10:10,13|11:34,23|3:4
         if (isset($filters['attr']) && $filters['attr']) {
-            $attributes = self::parseFilterParamsAttr($filters['attr']);
-            foreach ($attributes as $attribute) {
-                $builder->whereHas('attributes', function ($query) use ($attribute) {
-                    $query->where('attribute_id', $attribute['attr'])
-                        ->whereIn('attribute_value_id', $attribute['value']);
-                });
+            if (! self::isPublicCatalog()) {
+                $attributes = self::parseFilterParamsAttr($filters['attr']);
+                foreach ($attributes as $attribute) {
+                    $builder->whereHas('attributes', function ($query) use ($attribute) {
+                        $query->where('attribute_id', $attribute['attr'])
+                            ->whereIn('attribute_value_id', $attribute['value']);
+                    });
+                }
             }
         }
 
@@ -281,6 +328,10 @@ class ProductRepo
 
     public static function getFilterAttribute($data): array
     {
+        if (self::isPublicCatalog()) {
+            return [];
+        }
+
         $builder = static::getBuilder(array_diff_key($data, ['attr' => '', 'price' => '']))
             ->select(['pa.attribute_id', 'pa.attribute_value_id'])
             ->with(['attributes.attribute.description', 'attributes.attribute_value.description'])
@@ -369,7 +420,12 @@ class ProductRepo
         $products = Product::query()->with('description')->where('active', 1)
             ->whereHas('description', function ($query) use ($name, $likeOperator) {
                 $query->where('name', $likeOperator, "%{$name}%");
-            })->orderByDesc('created_at')->limit($limit)->get();
+            });
+        if (self::isPublicCatalog()) {
+            $ids = self::sellableSkuIds();
+            $products->whereHas('skus', fn (Builder $query) => $query->whereIn('product_skus.id', $ids));
+        }
+        $products = $products->orderByDesc('created_at')->limit($limit)->get();
 
         return \Beike\Shop\Http\Resources\ProductSimple::collection($products)->jsonSerialize();
     }
@@ -407,15 +463,16 @@ class ProductRepo
      */
     public static function getAllProductsWithName(): ?array
     {
-        if (self::$allProductsWithName !== null) {
-            return self::$allProductsWithName;
+        $scope = self::catalogScope();
+        if (array_key_exists($scope, self::$allProductsWithName)) {
+            return self::$allProductsWithName[$scope];
         }
 
         $items     = [];
         $productIds = static::getBuilder()->select('products.id')->pluck('id');
 
         if ($productIds->isNotEmpty()) {
-            $names = DB::table('product_descriptions')
+            $names = ProductDescription::query()
                 ->whereIn('product_id', $productIds)
                 ->where('locale', locale())
                 ->select(['product_id', 'name'])
@@ -429,7 +486,7 @@ class ProductRepo
             }
         }
 
-        return self::$allProductsWithName = $items;
+        return self::$allProductsWithName[$scope] = $items;
     }
 
     /**
@@ -460,11 +517,10 @@ class ProductRepo
         }
 
         $productIds = array_map('intval', $productIds);
-        $driver     = getDBDriver();
-
         $query = Product::query()
             ->with(['description'])
             ->whereIn('id', $productIds);
+        $driver = $query->getModel()->getConnection()->getDriverName();
 
         if ($driver === 'mysql') {
             $idList = implode(',', $productIds);
@@ -517,5 +573,36 @@ class ProductRepo
             'referer'     => request()->header('referer'),
             'user_agent'  => request()->header('user-agent'),
         ]);
+    }
+
+    /**
+     * 判断当前是否处于展示商品库请求，集中避免访问展示库不存在的主库表。
+     */
+    private static function isPublicCatalog(): bool
+    {
+        $context = app(StoreContext::class);
+
+        return $context->isActive() && $context->isPublic();
+    }
+
+    /**
+     * 返回当前已发布映射允许展示的 SKU ID。
+     */
+    private static function sellableSkuIds(): array
+    {
+        return app(CatalogCartItemService::class)->sellablePublicSkuIds();
+    }
+
+    /**
+     * 生成商品仓储静态缓存的商品库作用域。
+     */
+    private static function catalogScope(): string
+    {
+        $context = app(StoreContext::class);
+        if ($context->isActive()) {
+            return $context->mode() . '|' . locale();
+        }
+
+        return StoreContext::REAL . '|' . locale();
     }
 }

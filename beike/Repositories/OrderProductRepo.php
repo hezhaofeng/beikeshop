@@ -19,6 +19,8 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use Plugin\CyberCloak\Services\CatalogOrderService;
+use Plugin\CyberCloak\Services\StoreContext;
 
 class OrderProductRepo
 {
@@ -36,16 +38,32 @@ class OrderProductRepo
             if ($variantLabels) {
                 $productName .= " - {$variantLabels}";
             }
+            $catalogMode = (string) ($cartProduct['catalog_mode'] ?? StoreContext::REAL);
+            if (! in_array($catalogMode, [StoreContext::REAL, StoreContext::PUBLIC], true)) {
+                throw new \RuntimeException('订单商品库模式无效');
+            }
+
             $orderProduct = [
-                'order_id'     => $order->id,
-                'product_id'   => $cartProduct['product_id'],
-                'order_number' => $order->number,
-                'product_sku'  => $cartProduct['product_sku'],
-                'name'         => $productName,
-                'image'        => $cartProduct['image'],
-                'quantity'     => $cartProduct['quantity'],
-                'price'        => $cartProduct['price'],
+                'order_id'                  => $order->id,
+                'product_id'                => $cartProduct['product_id'],
+                'order_number'              => $order->number,
+                'product_sku'               => $cartProduct['product_sku'],
+                'name'                      => $productName,
+                'image'                     => $cartProduct['image'],
+                'quantity'                  => $cartProduct['quantity'],
+                'price'                     => $cartProduct['price'],
+                'catalog_mode'              => $catalogMode,
+                'catalog_product_id'       => $cartProduct['catalog_product_id'] ?? $cartProduct['product_id'],
+                'catalog_sku_id'           => $cartProduct['catalog_sku_id'] ?? $cartProduct['sku_id'],
+                'fulfillment_sku'          => $cartProduct['fulfillment_sku'] ?? $cartProduct['product_sku'],
+                'catalog_mapping_version'  => $cartProduct['catalog_mapping_version']
+                    ?? app(CatalogOrderService::class)->mappingVersion($catalogMode),
             ];
+
+            // 展示 SKU 必须绑定已发布映射，避免订单创建后再依赖当前商品库解析履约身份。
+            if ($catalogMode === StoreContext::PUBLIC && trim((string) $orderProduct['fulfillment_sku']) === '') {
+                throw new \RuntimeException('展示订单缺少履约 SKU');
+            }
 
             $orderProduct = OrderProduct::create($orderProduct);
             hook_filter('repository.order_product.create.after', ['order_product' => $orderProduct, 'cart_product' => $cartProduct]);

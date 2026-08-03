@@ -12,8 +12,11 @@
 
 namespace Beike\Models;
 
+use Beike\Models\Concerns\UsesCatalogConnection;
+
 class ProductCategory extends Base
 {
+    use UsesCatalogConnection;
     protected $table = 'product_categories';
 
     protected $fillable = ['product_id', 'category_id'];

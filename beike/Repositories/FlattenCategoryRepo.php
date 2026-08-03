@@ -15,6 +15,9 @@ namespace Beike\Repositories;
 use Beike\Models\Category;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Plugin\CyberCloak\Services\CatalogResolver;
+use Plugin\CyberCloak\Services\CatalogRouteService;
+use Plugin\CyberCloak\Services\StoreContext;
 
 class FlattenCategoryRepo
 {
@@ -146,8 +149,9 @@ class FlattenCategoryRepo
      */
     private static function getAllFlattenCategories(): array
     {
-        if (self::$categories) {
-            return self::$categories;
+        $scope = self::scopeKey();
+        if (isset(self::$categories[$scope])) {
+            return self::$categories[$scope];
         }
         $width   = request('width', 300);
         $height  = request('height', 300);
@@ -156,8 +160,14 @@ class FlattenCategoryRepo
             ->select(['categories.id', 'categories.image', 'categories.parent_id', 'categories.active']);
 
         $categories = $builder->get();
+        $visibleIds = self::visibleCategoryIds();
+        $visibleSet = $visibleIds === null ? null : array_fill_keys($visibleIds, true);
         $result     = [];
         foreach ($categories as $category) {
+            if ($visibleSet !== null && ! isset($visibleSet[(int) $category->id])) {
+                continue;
+            }
+
             $imagePath               = $category->image;
             $item['id']              = $category->id;
             $item['url']             = $category->url;
@@ -167,7 +177,7 @@ class FlattenCategoryRepo
             $item['name']            = html_entity_decode($category->description->name ?? '');
             $result[$category['id']] = $item;
         }
-        self::$categories = $result;
+        self::$categories[$scope] = $result;
 
         return $result;
     }
@@ -198,20 +208,34 @@ class FlattenCategoryRepo
      */
     private static function getAllFlattenChildren(): array
     {
-        if (self::$children) {
-            return self::$children;
+        $scope = self::scopeKey();
+        if (isset(self::$children[$scope])) {
+            return self::$children[$scope];
         }
-        $categories = DB::table('categories')
+        $categories = self::catalogTable('categories')
             ->select(['id', 'parent_id'])
             ->orderBy('categories.position')
             ->orderBy('categories.parent_id')
             ->get();
 
-        $result = [];
+        $parentById = [];
         foreach ($categories as $category) {
-            $result[$category->parent_id][] = $category->id;
+            $parentById[(int) $category->id] = (int) $category->parent_id;
         }
-        self::$children = $result;
+
+        $visibleIds = self::visibleCategoryIds();
+        $visibleSet = $visibleIds === null ? null : array_fill_keys($visibleIds, true);
+        $result     = [];
+        foreach ($categories as $category) {
+            $categoryId = (int) $category->id;
+            if ($visibleSet !== null && ! isset($visibleSet[$categoryId])) {
+                continue;
+            }
+
+            $parentId = self::nearestVisibleParent((int) $category->parent_id, $parentById, $visibleSet);
+            $result[$parentId][] = $categoryId;
+        }
+        self::$children[$scope] = $result;
 
         return $result;
     }
@@ -254,28 +278,114 @@ class FlattenCategoryRepo
      */
     private static function getAllCategories(): array
     {
-        if (! is_null(self::$allCategories)) {
-            return self::$allCategories;
+        $scope = self::scopeKey();
+        if (isset(self::$allCategories[$scope])) {
+            return self::$allCategories[$scope];
         }
-        $allCategories = DB::table('categories')
+        $categories = self::catalogTable('categories')
             ->select(['id', 'parent_id'])
             ->get()
-            ->map(function ($category) {
-                return [
-                    'id'        => (int) $category->id,
-                    'parent_id' => (int) $category->parent_id,
-                ];
-            })
-            ->toArray();
-        self::$allCategories = $allCategories;
+            ->all();
+        $parentById = [];
+        foreach ($categories as $category) {
+            $parentById[(int) $category->id] = (int) $category->parent_id;
+        }
+
+        $visibleIds = self::visibleCategoryIds();
+        $visibleSet = $visibleIds === null ? null : array_fill_keys($visibleIds, true);
+        $allCategories = [];
+        foreach ($categories as $category) {
+            $categoryId = (int) $category->id;
+            if ($visibleSet !== null && ! isset($visibleSet[$categoryId])) {
+                continue;
+            }
+
+            $allCategories[] = [
+                'id'        => $categoryId,
+                'parent_id' => self::nearestVisibleParent((int) $category->parent_id, $parentById, $visibleSet),
+            ];
+        }
+        self::$allCategories[$scope] = $allCategories;
 
         return $allCategories;
     }
 
     private static function cacheKey(string $name, array $parts = []): string
     {
+        $parts[] = self::scopeKey();
         $parts[] = CategoryRepo::cacheVersion();
 
         return 'category.flatten.' . $name . '.' . md5(json_encode($parts));
+    }
+
+    /**
+     * public 模式只展示有稳定反向路由的 Cloak 分类，避免生成 categories/0 死链接。
+     * 路由表尚未迁移时返回 null，保持旧版本同 ID 兼容行为。
+     *
+     * @return array<int,int>|null
+     */
+    private static function visibleCategoryIds(): ?array
+    {
+        if (! app()->bound(StoreContext::class)) {
+            return null;
+        }
+
+        $context = app(StoreContext::class);
+        if (! $context->isActive() || ! $context->isPublic() || ! app()->bound(CatalogRouteService::class)) {
+            return null;
+        }
+
+        return app(CatalogRouteService::class)->mappedPublicCategoryIds();
+    }
+
+    /**
+     * 父分类被过滤时，把分类挂到最近的可见祖先；找不到祖先则提升为根分类。
+     *
+     * @param array<int,int> $parentById
+     * @param array<int,bool>|null $visibleSet
+     */
+    private static function nearestVisibleParent(int $parentId, array $parentById, ?array $visibleSet): int
+    {
+        if ($visibleSet === null) {
+            return $parentId;
+        }
+
+        $visited = [];
+        while ($parentId > 0 && ! isset($visibleSet[$parentId])) {
+            if (isset($visited[$parentId])) {
+                return 0;
+            }
+
+            $visited[$parentId] = true;
+            $parentId           = $parentById[$parentId] ?? 0;
+        }
+
+        return $parentId;
+    }
+
+    /**
+     * 返回当前模式的分类表查询，避免展示模式误读主库。
+     */
+    private static function catalogTable(string $table)
+    {
+        if (app()->bound(CatalogResolver::class)) {
+            return app(CatalogResolver::class)->table($table);
+        }
+
+        return DB::table($table);
+    }
+
+    /**
+     * 为静态分类缓存生成包含商品库模式的隔离键。
+     */
+    private static function scopeKey(): string
+    {
+        $context = app(StoreContext::class);
+        $mode    = $context->isActive() ? $context->mode() : StoreContext::REAL;
+        $visibleIds = self::visibleCategoryIds();
+        $routeScope = $visibleIds === null ? 'legacy' : sha1(json_encode($visibleIds));
+
+        // 这些静态缓存还包含名称和图片尺寸，常驻进程必须隔离语言与请求尺寸。
+        return implode('|', [$mode, locale(), (int) request('width', 300), (int) request('height', 300), $routeScope]);
     }
 }

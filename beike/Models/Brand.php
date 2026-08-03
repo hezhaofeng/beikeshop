@@ -12,12 +12,14 @@
 
 namespace Beike\Models;
 
+use Beike\Models\Concerns\UsesCatalogConnection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Brand extends Base
 {
     use HasFactory;
+    use UsesCatalogConnection;
 
     protected $fillable = ['name', 'first', 'logo', 'sort_order', 'active'];
 

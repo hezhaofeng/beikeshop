@@ -42,6 +42,20 @@ class Kernel extends HttpKernel
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
             \App\Http\Middleware\CheckCustomerSessionValid::class,
         ],
+        // Horizon 复用后台会话能力，但不继承 shop 组中的前台商品上下文插件。
+        'horizon'   => [
+            \App\Http\Middleware\EncryptCookies::class,
+            \Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
+            \Illuminate\Session\Middleware\StartSession::class,
+            \App\Http\Middleware\SetAppTimezone::class,
+            \App\Http\Middleware\SetLocaleFromSession::class,
+            \App\Http\Middleware\ShareViewData::class,
+            \Illuminate\View\Middleware\ShareErrorsFromSession::class,
+            \App\Http\Middleware\MaintenanceMode::class,
+            \App\Http\Middleware\VerifyCsrfToken::class,
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+            \App\Http\Middleware\CheckCustomerSessionValid::class,
+        ],
         'admin'     => [
             \App\Http\Middleware\EncryptCookies::class,
             \Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
@@ -70,6 +84,9 @@ class Kernel extends HttpKernel
         ],
 
         'api'       => [
+            // 前台 API 也需要读取 cyberCloak 上下文 Cookie。
+            \App\Http\Middleware\EncryptCookies::class,
+            \Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
             // \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
             'throttle:api',
             \App\Http\Middleware\SetAppTimezone::class,

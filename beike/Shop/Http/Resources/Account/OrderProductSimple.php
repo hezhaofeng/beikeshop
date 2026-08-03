@@ -22,6 +22,11 @@ class OrderProductSimple extends JsonResource
         $data = [
             'id'            => $this->id,
             'product_id'    => $this->product_id,
+            'catalog_mode'  => $this->catalog_mode ?: 'real',
+            'catalog_product_id' => $this->catalog_product_id ?: $this->product_id,
+            'catalog_sku_id' => $this->catalog_sku_id,
+            'fulfillment_sku' => $this->fulfillment_sku ?: $this->product_sku,
+            'catalog_mapping_version' => $this->catalog_mapping_version,
             'name'          => $this->name,
             'sku'           => $this->product_sku,
             'quantity'      => $this->quantity,

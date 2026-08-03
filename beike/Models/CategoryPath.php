@@ -2,12 +2,14 @@
 
 namespace Beike\Models;
 
+use Beike\Models\Concerns\UsesCatalogConnection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class CategoryPath extends Base
 {
     use HasFactory;
+    use UsesCatalogConnection;
 
     protected $fillable = [
         'category_id',

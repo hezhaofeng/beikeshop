@@ -94,6 +94,19 @@
               </x-admin-form-select>
             @endif
 
+            @if ($column['type'] == 'select-multiple')
+              <x-admin-form-select
+                :name="$column['name']"
+                :title="$column['label']"
+                :value="old($column['name'], $column['value'] ?? [])"
+                :options="$column['options']"
+                :multiple="true">
+                @if (isset($column['description']))
+                  <div class="help-text font-size-12 lh-base">{{ $column['description'] }}</div>
+                @endif
+              </x-admin-form-select>
+            @endif
+
             @if ($column['type'] == 'bool')
               <x-admin-form-switch
                 :name="$column['name']"
@@ -207,6 +220,8 @@
           </x-admin::form.row>
         </form>
       @endhookwrapper
+
+      @hook('admin.plugin.form.after', $plugin)
 
       @if (!empty($pluginReadmeHtml))
           </div>

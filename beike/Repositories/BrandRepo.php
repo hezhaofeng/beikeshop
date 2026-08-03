@@ -20,10 +20,11 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
+use Plugin\CyberCloak\Services\StoreContext;
 
 class BrandRepo
 {
-    private static $allBrandsWithName;
+    private static $allBrandsWithName = [];
 
     private const CACHE_TTL = 86400;
 
@@ -232,13 +233,14 @@ class BrandRepo
      */
     public static function getAllBrandsWithName(): ?array
     {
-        if (self::$allBrandsWithName !== null) {
-            return self::$allBrandsWithName;
+        $scope = self::catalogScope();
+        if (array_key_exists($scope, self::$allBrandsWithName)) {
+            return self::$allBrandsWithName[$scope];
         }
 
         $cacheKey = self::cacheKey('names');
 
-        return self::$allBrandsWithName = Cache::remember($cacheKey, self::CACHE_TTL, function () {
+        $items = Cache::remember($cacheKey, self::CACHE_TTL, function () {
             $items  = [];
             $brands = self::getBuilder()->select(['id', 'name'])->get();
             foreach ($brands as $brand) {
@@ -250,11 +252,15 @@ class BrandRepo
 
             return $items;
         });
+
+        self::$allBrandsWithName[$scope] = $items;
+
+        return $items;
     }
 
     public static function clearCache(): void
     {
-        self::$allBrandsWithName = null;
+        self::$allBrandsWithName = [];
 
         Cache::forever(self::CACHE_VERSION_KEY, (string) microtime(true));
     }
@@ -266,8 +272,22 @@ class BrandRepo
 
     private static function cacheKey(string $name, array $parts = []): string
     {
+        $parts[] = self::catalogScope();
         $parts[] = self::cacheVersion();
 
         return 'brand.' . $name . '.' . md5(json_encode($parts));
+    }
+
+    /**
+     * 生成包含商品库模式的品牌缓存作用域。
+     */
+    private static function catalogScope(): string
+    {
+        $context = app(StoreContext::class);
+        if ($context->isActive()) {
+            return $context->mode();
+        }
+
+        return StoreContext::REAL;
     }
 }

@@ -19,6 +19,18 @@ class ProductView extends Base
 {
     use HasFactory;
 
+    /**
+     * 浏览记录属于主库，不能继承展示商品模型的 catalog_public 连接。
+     */
+    public function getConnectionName(): ?string
+    {
+        if ($this->connection !== null) {
+            return parent::getConnectionName();
+        }
+
+        return (string) config('database.default', 'mysql');
+    }
+
     protected $fillable = ['product_id', 'customer_id', 'ip', 'session_id', 'referer', 'user_agent'];
 
     public function product(): BelongsTo

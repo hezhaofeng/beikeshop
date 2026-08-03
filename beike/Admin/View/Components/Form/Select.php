@@ -24,6 +24,8 @@ class Select extends Component
 
     public string $format;
 
+    public bool $multiple;
+
     public function __construct(
         string $name,
         mixed $value,
@@ -33,7 +35,8 @@ class Select extends Component
         ?string $key = 'value',
         ?string $label = 'label',
         ?string $class = '',
-        ?int $format = 1
+        ?int $format = 1,
+        bool $multiple = false,
     ) {
         $this->name    = $name;
         $this->title   = $title;
@@ -44,6 +47,8 @@ class Select extends Component
         $this->label   = $label;
         $this->class   = $class ?: 'form-select me-3 wp-' . $width;
         $this->format  = $format;
+        // 多选字段由组件统一追加 []，保证请求保存为 JSON 数组。
+        $this->multiple = $multiple;
     }
 
     public function render()

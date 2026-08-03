@@ -19,6 +19,8 @@ use Beike\Repositories\PageRepo;
 use Beike\Repositories\ProductRepo;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
+use Plugin\CyberCloak\Services\CatalogRouteService;
+use Plugin\CyberCloak\Services\StoreContext;
 
 class Url
 {
@@ -41,9 +43,10 @@ class Url
     {
         if (empty($type) || empty($value) || ! in_array($type, self::TYPES)) {
             $result = hook_filter('url.link', ['type' => $type, 'value' => $value, 'url' => '']);
-            if (!empty($result['url'])) {
+            if (! empty($result['url'])) {
                 return $result['url'];
             }
+
             return '';
         }
 
@@ -53,12 +56,24 @@ class Url
 
         if ($type == 'category') {
             if (! $value instanceof \Beike\Models\Category) {
+                if ($this->isPublicCatalog()) {
+                    $urlId = app(CatalogRouteService::class)->urlIdForRealRecord('category', (int) $value);
+
+                    return $urlId > 0 ? shop_route('categories.show', ['category' => $urlId]) : '';
+                }
+
                 $value = \Beike\Models\Category::query()->find($value);
             }
 
             return $value->url ?? '';
         } elseif ($type == 'product') {
             if (! $value instanceof \Beike\Models\Product) {
+                if ($this->isPublicCatalog()) {
+                    $urlId = app(CatalogRouteService::class)->urlIdForRealRecord('product', (int) $value);
+
+                    return $urlId > 0 ? shop_route('products.show', ['product' => $urlId]) : '';
+                }
+
                 $value = \Beike\Models\Product::query()->find($value);
             }
 
@@ -115,9 +130,10 @@ class Url
         $types = ['category', 'product', 'brand', 'page', 'page_category', 'static', 'custom'];
         if (empty($type) || empty($value) || ! in_array($type, $types)) {
             $result = hook_filter('url.label', ['type' => $type, 'value' => $value, 'texts' => $texts, 'label' => '']);
-            if (!empty($result['label'])) {
+            if (! empty($result['label'])) {
                 return $result['label'];
             }
+
             return '';
         }
 
@@ -128,8 +144,20 @@ class Url
         }
 
         if ($type == 'category') {
+            if ($this->isPublicCatalog() && ! is_object($value)) {
+                $publicId = app(CatalogRouteService::class)->publicRecordIdForRealRecord('category', (int) $value);
+
+                return $publicId > 0 ? CategoryRepo::getName($publicId) : '';
+            }
+
             return CategoryRepo::getName($value);
         } elseif ($type == 'product') {
+            if ($this->isPublicCatalog() && ! is_object($value)) {
+                $publicId = app(CatalogRouteService::class)->publicRecordIdForRealRecord('product', (int) $value);
+
+                return $publicId > 0 ? ProductRepo::getName($publicId) : '';
+            }
+
             return ProductRepo::getName($value);
         } elseif ($type == 'brand') {
             return BrandRepo::getName($value);
@@ -146,6 +174,20 @@ class Url
         }
 
         return '';
+    }
+
+    /**
+     * 判断当前是否处于 public 商品库前台请求。
+     */
+    private function isPublicCatalog(): bool
+    {
+        if (! app()->bound(StoreContext::class)) {
+            return false;
+        }
+
+        $context = app(StoreContext::class);
+
+        return $context->isActive() && $context->isPublic();
     }
 
     /**

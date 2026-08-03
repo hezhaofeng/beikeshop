@@ -43,6 +43,21 @@
                 @endforeach
               </select>
             </el-form-item>
+            <el-form-item label="{{ __('admin/order.catalog_mode') }}" class="el-input--small">
+              <select v-model="filter.catalog_mode" class="form-select wp-100 bs-el-input-inner-sm">
+                <option value="">{{ __('common.all') }}</option>
+                <option value="real">{{ __('admin/order.catalog_real') }}</option>
+                <option value="public">{{ __('admin/order.catalog_public') }}</option>
+              </select>
+            </el-form-item>
+            <el-form-item label="{{ __('admin/order.fulfillment_sku') }}">
+              <el-input @keyup.enter.native="search" v-model="filter.fulfillment_sku" size="small"
+                        placeholder="{{ __('admin/order.fulfillment_sku') }}"></el-input>
+            </el-form-item>
+            <el-form-item label="{{ __('admin/order.catalog_mapping_version') }}">
+              <el-input @keyup.enter.native="search" v-model="filter.catalog_mapping_version" size="small"
+                        placeholder="{{ __('admin/order.catalog_mapping_version') }}"></el-input>
+            </el-form-item>
           </div>
           <el-form-item label="{{ __('order.created_at') }}">
             <el-form-item>
@@ -162,6 +177,9 @@
         filter: {
           number: bk.getQueryString('number'),
           status: bk.getQueryString('status'),
+          catalog_mode: bk.getQueryString('catalog_mode'),
+          fulfillment_sku: bk.getQueryString('fulfillment_sku'),
+          catalog_mapping_version: bk.getQueryString('catalog_mapping_version'),
           customer_name: bk.getQueryString('customer_name'),
           email: bk.getQueryString('email'),
           start: bk.getQueryString('start'),

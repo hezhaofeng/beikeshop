@@ -1,0 +1,16 @@
+{
+    "code": "cyber_cloak",
+    "name": {
+        "zh_cn": "cyberCloak",
+        "en": "cyberCloak"
+    },
+    "description": {
+        "zh_cn": "根据访问 key、Cookie 和 IP 规则选择真实商品库或展示商品库。",
+        "en": "Select the real or public catalog from the access key, cookie, and IP rules."
+    },
+    "type": "feature",
+    "version": "v1.2.0",
+    "author": {
+        "name": "BeikeShop"
+    }
+}

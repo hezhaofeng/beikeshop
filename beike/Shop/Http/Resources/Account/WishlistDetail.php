@@ -29,6 +29,8 @@ class WishlistDetail extends JsonResource
         $data = [
             'id'           => $this->id,
             'product_id'   => $this->product_id,
+            'catalog_mode' => $this->catalog_mode,
+            'catalog_product_id' => $this->catalog_product_id,
             'image'        => image_resize($image),
             'product_name' => sub_string($productName, 24),
             'price'        => currency_format($masterSku->price),

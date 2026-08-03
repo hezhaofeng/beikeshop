@@ -18,6 +18,12 @@ class OrderProduct extends Base
 {
     protected $fillable = [
         'order_id', 'product_id', 'order_number', 'product_sku', 'name', 'image', 'quantity', 'price',
+        'catalog_mode', 'catalog_product_id', 'catalog_sku_id', 'fulfillment_sku', 'catalog_mapping_version',
+    ];
+
+    protected $casts = [
+        'catalog_product_id' => 'integer',
+        'catalog_sku_id'     => 'integer',
     ];
 
     protected $appends = ['price_format'];

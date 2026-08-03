@@ -2,6 +2,7 @@
 
 namespace Beike\Models;
 
+use Beike\Models\Concerns\UsesCatalogConnection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -10,6 +11,7 @@ class Product extends Base
 {
     use HasFactory;
     use SoftDeletes;
+    use UsesCatalogConnection;
 
     protected $fillable = ['images', 'video', 'position', 'brand_id', 'tax_class_id', 'weight', 'weight_class', 'active', 'shipping', 'variables'];
 
@@ -75,13 +77,18 @@ class Product extends Base
     {
         $customer   = current_customer();
         $customerId = $customer ? $customer->id : 0;
+        $mode       = app(\Plugin\CyberCloak\Services\CatalogCartItemService::class)->currentMode();
 
-        return $this->hasOne(CustomerWishlist::class)->where('customer_id', $customerId);
+        return $this->hasOne(CustomerWishlist::class)
+            ->where('customer_id', $customerId)
+            ->where('catalog_mode', $mode)
+            ->where('catalog_product_id', $this->getKey());
     }
 
     public function getUrlAttribute()
     {
-        $url     = shop_route('products.show', ['product' => $this]);
+        $urlId   = app(\Plugin\CyberCloak\Services\CatalogRouteService::class)->urlIdForProduct($this);
+        $url     = shop_route('products.show', ['product' => $urlId]);
         $filters = hook_filter('model.product.url', ['url' => $url, 'product' => $this]);
 
         return $filters['url'] ?? '';

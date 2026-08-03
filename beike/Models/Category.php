@@ -2,6 +2,7 @@
 
 namespace Beike\Models;
 
+use Beike\Models\Concerns\UsesCatalogConnection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -10,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class Category extends Base
 {
     use HasFactory;
+    use UsesCatalogConnection;
 
     protected $fillable = [
         'parent_id', 'position', 'image', 'active',
@@ -56,7 +58,9 @@ class Category extends Base
 
     public function getUrlAttribute()
     {
-        $url     = shop_route('categories.show', ['category' => $this]);
+        $urlId   = app(\Plugin\CyberCloak\Services\CatalogRouteService::class)->urlIdForCategory($this);
+        // 路由表存在但分类没有反向映射时不生成 categories/0，避免前台树进入不存在页面。
+        $url     = $urlId > 0 ? shop_route('categories.show', ['category' => $urlId]) : '';
         $filters = hook_filter('model.category.url', ['url' => $url, 'category' => $this]);
 
         return $filters['url'] ?? '';

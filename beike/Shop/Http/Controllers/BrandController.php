@@ -5,6 +5,7 @@ namespace Beike\Shop\Http\Controllers;
 use Beike\Repositories\BrandRepo;
 use Beike\Shop\Http\Resources\ProductSimple;
 use Illuminate\Http\Request;
+use Plugin\CyberCloak\Services\CatalogCartItemService;
 
 class BrandController extends Controller
 {
@@ -33,8 +34,14 @@ class BrandController extends Controller
                 'masterSku',
                 'description',
                 'inCurrentWishlist',
-            ])
-            ->paginate(perPage());
+            ]);
+        $catalog = app(CatalogCartItemService::class);
+        if ($catalog->currentMode() === 'public') {
+            $skuIds = $catalog->sellablePublicSkuIds();
+            $products->whereHas('skus', fn ($query) => $query->whereIn('product_skus.id', $skuIds));
+            $products->with(['masterSku' => fn ($query) => $query->whereIn('product_skus.id', $skuIds)]);
+        }
+        $products = $products->paginate(perPage());
 
         $data = [
             'brand'           => $brand,

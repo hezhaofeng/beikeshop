@@ -13,16 +13,18 @@
 namespace Beike\Repositories;
 
 use Beike\Models\Category;
+use Beike\Models\CategoryDescription;
 use Beike\Models\CategoryPath;
 use Beike\Shop\Http\Resources\CategoryDetail;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Plugin\CyberCloak\Services\StoreContext;
 
 class CategoryRepo
 {
-    private static $allCategoryWithName = null;
+    private static $allCategoryWithName = [];
 
     private const CACHE_TTL = 86400;
 
@@ -272,18 +274,19 @@ class CategoryRepo
      */
     public static function getAllCategoriesWithName(): ?array
     {
-        if (self::$allCategoryWithName !== null) {
-            return self::$allCategoryWithName;
+        $scope = self::catalogScope();
+        if (array_key_exists($scope, self::$allCategoryWithName)) {
+            return self::$allCategoryWithName[$scope];
         }
 
         $cacheKey = self::cacheKey('names', [locale()]);
 
-        return self::$allCategoryWithName = Cache::remember($cacheKey, self::CACHE_TTL, function () {
+        $items = Cache::remember($cacheKey, self::CACHE_TTL, function () {
             $items        = [];
             $categoryIds = self::getBuilder()->select('categories.id')->pluck('id');
 
             if ($categoryIds->isNotEmpty()) {
-                $names = DB::table('category_descriptions')
+                $names = CategoryDescription::query()
                     ->whereIn('category_id', $categoryIds)
                     ->where('locale', locale())
                     ->select(['category_id', 'name'])
@@ -299,11 +302,15 @@ class CategoryRepo
 
             return $items;
         });
+
+        self::$allCategoryWithName[$scope] = $items;
+
+        return $items;
     }
 
     public static function clearCache(): void
     {
-        self::$allCategoryWithName = null;
+        self::$allCategoryWithName = [];
 
         Cache::forever(self::CACHE_VERSION_KEY, (string) microtime(true));
     }
@@ -315,8 +322,22 @@ class CategoryRepo
 
     private static function cacheKey(string $name, array $parts = []): string
     {
+        $parts[] = self::catalogScope();
         $parts[] = self::cacheVersion();
 
         return 'category.' . $name . '.' . md5(json_encode($parts));
+    }
+
+    /**
+     * 生成包含商品库模式的分类缓存作用域。
+     */
+    private static function catalogScope(): string
+    {
+        $context = app(StoreContext::class);
+        if ($context->isActive()) {
+            return $context->mode() . '|' . locale();
+        }
+
+        return StoreContext::REAL . '|' . locale();
     }
 }

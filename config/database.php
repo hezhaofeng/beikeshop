@@ -63,6 +63,27 @@ return [
             ]) : [],
         ],
 
+        // 展示商品库连接，阶段一只提供显式连接配置，不切换应用默认连接。
+        'catalog_public' => [
+            'driver'         => 'mysql',
+            'url'            => env('CATALOG_PUBLIC_DATABASE_URL'),
+            'host'           => env('CATALOG_PUBLIC_DB_HOST', env('DB_HOST', '127.0.0.1')),
+            'port'           => env('CATALOG_PUBLIC_DB_PORT', env('DB_PORT', '3306')),
+            'database'       => env('CATALOG_PUBLIC_DB_DATABASE', 'beike_public'),
+            'username'       => env('CATALOG_PUBLIC_DB_USERNAME', env('DB_USERNAME', 'forge')),
+            'password'       => env('CATALOG_PUBLIC_DB_PASSWORD', env('DB_PASSWORD', '')),
+            'unix_socket'    => env('CATALOG_PUBLIC_DB_SOCKET', env('DB_SOCKET', '')),
+            'charset'        => 'utf8mb4',
+            'collation'      => 'utf8mb4_unicode_ci',
+            'prefix'         => env('CATALOG_PUBLIC_DB_PREFIX', ''),
+            'prefix_indexes' => true,
+            'strict'         => true,
+            'engine'         => 'InnoDB',
+            'options'        => extension_loaded('pdo_mysql') ? array_filter([
+                PDO::MYSQL_ATTR_SSL_CA => env('CATALOG_PUBLIC_MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+        ],
+
         'opencart'  => [
             'driver'         => 'mysql',
             'host'           => env('DB_HOST', '127.0.0.1'),

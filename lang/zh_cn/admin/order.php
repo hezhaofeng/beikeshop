@@ -58,4 +58,9 @@ return [
     'order_print_error'             => '请勾选要打印的订单',
     'error_no_express_company'      => '没有快递公司，请先添加',
     'to_add_express_company'        => '去添加',
+    'catalog_mode'                  => '商品库模式',
+    'catalog_real'                  => '真实商品库',
+    'catalog_public'                => '展示商品库',
+    'fulfillment_sku'               => '履约 SKU',
+    'catalog_mapping_version'       => '映射版本',
 ];

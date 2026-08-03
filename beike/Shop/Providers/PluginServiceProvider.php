@@ -12,6 +12,7 @@
 
 namespace Beike\Shop\Providers;
 
+use App\Http\Middleware\ShareViewData;
 use Beike\Models\AdminUser;
 use Beike\Plugin\Manager;
 use Exception;
@@ -208,11 +209,18 @@ class PluginServiceProvider extends ServiceProvider
 
         $router           = $this->app['router'];
         $shopMiddlewares  = $this->loadMiddlewares("$middlewarePath/Shop");
+        $apiMiddlewares   = $this->loadMiddlewares("$middlewarePath/API");
         $adminMiddlewares = $this->loadMiddlewares("$middlewarePath/Admin");
 
         if ($shopMiddlewares) {
             foreach ($shopMiddlewares as $shopMiddleware) {
-                $router->pushMiddlewareToGroup('shop', $shopMiddleware);
+                $this->registerMiddlewareToGroup($router, $pluginCode, 'shop', $shopMiddleware);
+            }
+        }
+
+        if ($apiMiddlewares) {
+            foreach ($apiMiddlewares as $apiMiddleware) {
+                $this->registerMiddlewareToGroup($router, $pluginCode, 'api', $apiMiddleware);
             }
         }
 
@@ -221,6 +229,64 @@ class PluginServiceProvider extends ServiceProvider
                 $router->pushMiddlewareToGroup('admin', $adminMiddleware);
             }
         }
+    }
+
+    /**
+     * 注册插件中间件，并为请求上下文插件保留路由绑定前的执行位置。
+     *
+     * @param mixed  $router
+     * @param string $pluginCode
+     * @param string $group
+     * @param string $middleware
+     */
+    private function registerMiddlewareToGroup($router, string $pluginCode, string $group, string $middleware): void
+    {
+        if ($pluginCode === 'CyberCloak') {
+            // 商品库上下文要晚于 Cookie 解密，但必须先于 SubstituteBindings。
+            $this->insertMiddlewareBeforeBindings($router, $group, $middleware);
+
+            return;
+        }
+
+        $router->pushMiddlewareToGroup($group, $middleware);
+    }
+
+    /**
+     * 将上下文中间件插入视图数据共享和路由绑定之前，避免菜单先按真实库生成。
+     *
+     * @param mixed  $router
+     * @param string $group
+     * @param string $middleware
+     */
+    private function insertMiddlewareBeforeBindings($router, string $group, string $middleware): void
+    {
+        $middlewares = $router->getMiddlewareGroups()[$group] ?? [];
+        if (in_array($middleware, $middlewares, true)) {
+            return;
+        }
+
+        // Cookie 已在组开头解密；shop 组必须在 ShareViewData 前激活上下文，API 则回退到路由绑定前。
+        $beforeMiddlewares = [
+            ShareViewData::class,
+            \Illuminate\Routing\Middleware\SubstituteBindings::class,
+        ];
+        $insertionIndex = false;
+        foreach ($beforeMiddlewares as $beforeMiddleware) {
+            $index = array_search($beforeMiddleware, $middlewares, true);
+            if ($index !== false) {
+                $insertionIndex = $index;
+
+                break;
+            }
+        }
+
+        if ($insertionIndex === false) {
+            $middlewares[] = $middleware;
+        } else {
+            array_splice($middlewares, $insertionIndex, 0, [$middleware]);
+        }
+
+        $router->middlewareGroup($group, $middlewares);
     }
 
     /**

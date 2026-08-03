@@ -55,4 +55,9 @@ return [
     'add_express'                   => 'Add courier',
     'error_no_express_company'      => 'There is no courier company, please add it first',
     'to_add_express_company'        => 'Go Add',
+    'catalog_mode'                  => 'Catalog mode',
+    'catalog_real'                  => 'Real catalog',
+    'catalog_public'                => 'Public catalog',
+    'fulfillment_sku'               => 'Fulfillment SKU',
+    'catalog_mapping_version'       => 'Mapping version',
 ];
