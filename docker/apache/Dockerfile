@@ -1,6 +1,6 @@
 FROM php:8.2-apache
 
-# Install system dependencies
+# 安装系统依赖，以及编译 Intl 所需的 ICU 开发库
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     libonig-dev \
     libxml2-dev \
     libzip-dev \
+    libicu-dev \
     libjpeg-dev \
     libfreetype6-dev \
     libwebp-dev \
@@ -25,6 +26,7 @@ RUN apt-get update && apt-get install -y \
         gd \
         simplexml \
         zip \
+        intl \
         opcache \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
