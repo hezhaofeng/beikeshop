@@ -1,0 +1,17 @@
+{
+    "code": "zelle",
+    "name": {
+        "zh_cn": "Zelle 转账",
+        "en": "Zelle Transfer"
+    },
+    "description": {
+        "zh_cn": "向商户 Zelle 收款标识转账，到账后由后台核验订单。",
+        "en": "Transfer to the merchant's Zelle recipient and wait for payment verification."
+    },
+    "type": "payment",
+    "version": "v1.0.0",
+    "author": {
+        "name": "BeikeShop",
+        "email": "service@beikeshop.com"
+    }
+}
