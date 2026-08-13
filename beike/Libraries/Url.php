@@ -41,6 +41,12 @@ class Url
      */
     public function link($type, $value)
     {
+        // 访问模式插件可在默认模型查询前直接提供商品/分类 URL。
+        $mapped = hook_filter('url.link', ['type' => $type, 'value' => $value, 'url' => '', 'handled' => false]);
+        if (($mapped['handled'] ?? false) === true) {
+            return (string) ($mapped['url'] ?? '');
+        }
+
         if (empty($type) || empty($value) || ! in_array($type, self::TYPES)) {
             $result = hook_filter('url.link', ['type' => $type, 'value' => $value, 'url' => '']);
             if (! empty($result['url'])) {

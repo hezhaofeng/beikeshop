@@ -14,7 +14,6 @@ namespace Beike\Repositories;
 
 use Beike\Models\Customer;
 use Beike\Models\CustomerWishlist;
-use Plugin\CyberCloak\Services\CatalogCartItemService;
 use Beike\Models\Product;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -189,19 +188,8 @@ class CustomerRepo
             $customer = Customer::query()->findOrFail($customer);
         }
 
-        $mode = app(CatalogCartItemService::class)->currentMode();
-        $exists = $customer->wishlists()
-            ->where('catalog_mode', $mode)
-            ->where('catalog_product_id', $productId)
-            ->first();
-        if (! $exists) {
-            $wishlist = $customer->wishlists()->save(new CustomerWishlist([
-                'product_id'         => $productId,
-                'catalog_mode'       => $mode,
-                'catalog_product_id' => $productId,
-            ]));
-        } else {
-            $wishlist = $exists;
+        if (! $customer->wishlists()->where('product_id', $productId)->first()) {
+            $wishlist = $customer->wishlists()->save(new CustomerWishlist(['product_id' => $productId]));
         }
 
         return $wishlist;
@@ -217,10 +205,7 @@ class CustomerRepo
         if (! $customer instanceof Customer) {
             $customer = Customer::query()->findOrFail($customer);
         }
-        $customer->wishlists()
-            ->where('id', $id)
-            ->where('catalog_mode', app(CatalogCartItemService::class)->currentMode())
-            ->delete();
+        $customer->wishlists()->where('id', $id)->delete();
 
         return $customer;
     }
@@ -230,24 +215,10 @@ class CustomerRepo
         if (! $customer instanceof Customer) {
             $customer = Customer::query()->findOrFail($customer);
         }
-        $mode      = app(CatalogCartItemService::class)->currentMode();
-        $paginator = $customer->wishlists()
-            ->where('catalog_mode', $mode)
-            ->paginate(perPage());
-        $catalog = app(CatalogCartItemService::class);
-        $items   = $paginator->getCollection()->filter(function (CustomerWishlist $wishlist) use ($catalog, $mode): bool {
-            $productId = (int) ($wishlist->catalog_product_id ?: $wishlist->product_id);
-            $product   = $catalog->findProduct($mode, $productId);
-            if (! $product) {
-                return false;
-            }
-            $wishlist->setRelation('product', $product);
+        $builder = $customer->wishlists()
+            ->whereHas('product');
 
-            return true;
-        })->values();
-        $paginator->setCollection($items);
-
-        return $paginator;
+        return $builder->with('product.description')->paginate(perPage());
     }
 
     /**
@@ -267,12 +238,7 @@ class CustomerRepo
             $customer = Customer::query()->findOrFail($customer);
         }
 
-        $mode = app(CatalogCartItemService::class)->currentMode();
-
-        return $customer->wishlists()
-            ->where('catalog_mode', $mode)
-            ->where('catalog_product_id', $product)
-            ->count();
+        return $customer->wishlists()->where('product_id', $product)->count();
     }
 
     /**

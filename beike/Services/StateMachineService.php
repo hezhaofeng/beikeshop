@@ -16,9 +16,8 @@ use Beike\Admin\Services\UniPushService;
 use beike\Models\Customer;
 use Beike\Models\Order;
 use Beike\Models\OrderHistory;
+use Beike\Models\Product;
 use Beike\Repositories\OrderPaymentRepo;
-use Illuminate\Support\Facades\DB;
-use Plugin\CyberCloak\Services\CatalogOrderService;
 use Throwable;
 
 class StateMachineService
@@ -221,35 +220,28 @@ class StateMachineService
 
         $this->setComment($comment)->setNotify($notify);
 
-        // 库存扣减和订单状态必须处于同一事务，库存不足时回滚已写入的支付状态。
-        DB::transaction(function () use ($status, $oldStatusCode, $newStatusCode, $comment, $notify): void {
-            $this->validStatusCode($status);
-            if ($status === self::PAID) {
-                // 展示订单必须先由后台审核，支付回调也经过这里，因此不能绕过审核门禁。
-                app(CatalogOrderService::class)->ensurePaymentAllowed($this->order);
-            }
-            $functions = $this->getFunctions($oldStatusCode, $newStatusCode);
-            if ($functions) {
-                foreach ($functions as $function) {
-                    if ($function instanceof \Closure) {
-                        $function();
+        $this->validStatusCode($status);
+        $functions = $this->getFunctions($oldStatusCode, $newStatusCode);
+        if ($functions) {
+            foreach ($functions as $function) {
+                if ($function instanceof \Closure) {
+                    $function();
 
-                        continue;
-                    }
-
-                    if (! method_exists($this, $function)) {
-                        throw new \Exception("{$function} not exist in StateMachine!");
-                    }
-                    $this->{$function}($oldStatusCode, $status);
+                    continue;
                 }
-            }
 
-            hook_filter('service.state_machine.change_status.after', ['order' => $this->order, 'status' => $status, 'comment' => $comment, 'notify' => $notify]);
-
-            if (! $this->order->shipping_method_code && $status == self::PAID) {
-                $this->changeStatus(self::COMPLETED, $comment, $notify);
+                if (! method_exists($this, $function)) {
+                    throw new \Exception("{$function} not exist in StateMachine!");
+                }
+                $this->{$function}($oldStatusCode, $status);
             }
-        });
+        }
+
+        hook_filter('service.state_machine.change_status.after', ['order' => $this->order, 'status' => $status, 'comment' => $comment, 'notify' => $notify]);
+
+        if (! $this->order->shipping_method_code && $status == self::PAID) {
+            $this->changeStatus(self::COMPLETED, $comment, $notify);
+        }
     }
 
     /**
@@ -319,7 +311,13 @@ class StateMachineService
      */
     private function updateSales()
     {
-        app(CatalogOrderService::class)->incrementSales($this->order);
+        $this->order->loadMissing([
+            'orderProducts',
+        ]);
+        $orderProducts = $this->order->orderProducts;
+        foreach ($orderProducts as $orderProduct) {
+            Product::query()->where('id', $orderProduct->product_id)->increment('sales', $orderProduct->quantity);
+        }
     }
 
     /**
@@ -348,7 +346,18 @@ class StateMachineService
      */
     private function subStock($oldCode, $newCode)
     {
-        app(CatalogOrderService::class)->decrement($this->order);
+        $this->order->loadMissing([
+            'orderProducts.productSku',
+        ]);
+        $orderProducts = $this->order->orderProducts;
+        foreach ($orderProducts as $orderProduct) {
+            $productSku = $orderProduct->productSku;
+            if (empty($productSku)) {
+                continue;
+            }
+            $productSku->decrement('quantity', $orderProduct->quantity);
+            hook_action('service.state_machine.sub_stock.after', ['order_product' => $orderProduct, 'order_number' => $this->order->number]);
+        }
     }
 
     /**
@@ -398,7 +407,18 @@ class StateMachineService
      */
     private function revertStock($oldCode, $newCode)
     {
-        app(CatalogOrderService::class)->restore($this->order);
+        $this->order->loadMissing([
+            'orderProducts.productSku',
+        ]);
+        $orderProducts = $this->order->orderProducts;
+        foreach ($orderProducts as $orderProduct) {
+            $productSku = $orderProduct->productSku;
+            if (empty($productSku)) {
+                continue;
+            }
+            $productSku->increment('quantity', $orderProduct->quantity);
+            hook_action('service.state_machine.revert_stock.after', ['order_product' => $orderProduct, 'order_number' => $this->order->number]);
+        }
     }
 
     /**

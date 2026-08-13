@@ -1090,8 +1090,7 @@ install_docker() {
 
     # Start Docker containers
     print_info "Starting Docker containers..."
-    run_docker_with_mirror_retry docker compose up -d mysql
-    run_docker_with_mirror_retry docker compose --profile nginx up -d --build
+    run_docker_with_mirror_retry docker compose up -d --build
 
     # Wait for MySQL
     print_info "Waiting for database to be ready..."

@@ -2,25 +2,23 @@
 
 namespace Plugin\CyberCloak;
 
-use Illuminate\Console\Scheduling\Schedule;
 use Plugin\CyberCloak\Services\AccessKeyService;
-use Plugin\CyberCloak\Services\CatalogCartItemService;
 use Plugin\CyberCloak\Services\CatalogContentMappingService;
 use Plugin\CyberCloak\Services\CatalogImportService;
 use Plugin\CyberCloak\Services\CatalogNavigationService;
-use Plugin\CyberCloak\Services\CatalogOrderService;
 use Plugin\CyberCloak\Services\CatalogResolver;
 use Plugin\CyberCloak\Services\CatalogRouteService;
+use Plugin\CyberCloak\Services\CloudIpRangeIntelligence;
 use Plugin\CyberCloak\Services\ContextTicketService;
+use Plugin\CyberCloak\Services\HomeBannerImageMappingService;
 use Plugin\CyberCloak\Services\HomeDesignMappingService;
 use Plugin\CyberCloak\Services\IpAccessService;
-use Plugin\CyberCloak\Services\IpProviderRegistry;
-use Plugin\CyberCloak\Services\IpProviderSyncService;
-use Plugin\CyberCloak\Services\IpRangeNormalizer;
 use Plugin\CyberCloak\Services\MaxMindIpIntelligence;
 use Plugin\CyberCloak\Services\SkuMappingService;
 use Plugin\CyberCloak\Services\StoreContext;
+use Plugin\CyberCloak\Services\TrafficBehaviorService;
 use Plugin\CyberCloak\Services\TrafficFunnelService;
+use Plugin\CyberCloak\Services\TrafficRiskAuditService;
 
 class Bootstrap
 {
@@ -36,21 +34,20 @@ class Bootstrap
         app()->singleton(AccessKeyService::class);
         app()->singleton(ContextTicketService::class);
         app()->singleton(IpAccessService::class);
-        app()->singleton(IpProviderRegistry::class);
-        app()->singleton(IpRangeNormalizer::class);
-        app()->singleton(IpProviderSyncService::class);
+        app()->singleton(CloudIpRangeIntelligence::class);
         app()->singleton(MaxMindIpIntelligence::class);
+        app()->singleton(TrafficBehaviorService::class);
+        app()->singleton(TrafficRiskAuditService::class);
         // 漏斗设置允许后台即时变更，请求级构造避免常驻进程持有旧配置。
         app()->scoped(TrafficFunnelService::class);
         app()->singleton(HomeDesignMappingService::class);
+        app()->singleton(HomeBannerImageMappingService::class);
         // 解析器会注入请求级 StoreContext，常驻进程中必须按请求作用域重新构造。
         app()->scoped(CatalogResolver::class);
         app()->singleton(CatalogRouteService::class);
         app()->singleton(CatalogContentMappingService::class);
         app()->singleton(CatalogImportService::class);
-        app()->singleton(CatalogCartItemService::class);
         app()->singleton(CatalogNavigationService::class);
-        app()->singleton(CatalogOrderService::class);
         app()->singleton(SkuMappingService::class);
 
         // 头部菜单配置保存的是真实分类；展示模式转换为去重后的 Cloak 一级分类。
@@ -92,26 +89,5 @@ class Bootstrap
             return (new \Beike\Models\Category)->resolveRouteBinding($value);
         });
 
-        $this->registerIpProviderSchedule();
-    }
-
-    /**
-     * 注册供应商定时同步，调度进程每次启动时重新读取后台配置。
-     */
-    private function registerIpProviderSchedule(): void
-    {
-        if (! app()->runningInConsole() || ! app()->bound(Schedule::class)) {
-            return;
-        }
-
-        $schedule = app(IpProviderSyncService::class)->configuration()['schedule'];
-        $event    = app(Schedule::class)->command('cyber-cloak:sync-ip-provider');
-        match ($schedule) {
-            'every_15_minutes' => $event->everyFifteenMinutes(),
-            'every_6_hours'    => $event->everySixHours(),
-            'daily'            => $event->daily(),
-            default            => $event->hourly(),
-        };
-        $event->withoutOverlapping();
     }
 }

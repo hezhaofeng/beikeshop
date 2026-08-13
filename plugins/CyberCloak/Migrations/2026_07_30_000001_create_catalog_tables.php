@@ -15,12 +15,12 @@ return new class extends Migration
     {
         $catalog = Schema::connection('catalog_public');
         // 本地调试和旧版部署可能只完成了部分展示库建表，重复执行时保留已有数据。
-        $createCatalogTable = static function (string $table, \Closure $definition) use ($catalog): void {
+        $createCatalogTable = static function (string $table, Closure $definition) use ($catalog): void {
             if (! $catalog->hasTable($table)) {
                 $catalog->create($table, $definition);
             }
         };
-        $createMainTable = static function (string $table, \Closure $definition): void {
+        $createMainTable = static function (string $table, Closure $definition): void {
             if (! Schema::hasTable($table)) {
                 Schema::create($table, $definition);
             }
@@ -160,7 +160,6 @@ return new class extends Migration
             $table->unsignedBigInteger('public_product_id')->nullable()->index();
             $table->string('real_sku', 128)->default('');
             $table->string('public_sku', 128)->default('');
-            $table->string('fulfillment_sku', 128)->default('');
             $table->string('status', 16)->index();
             $table->string('match_type', 32)->default('none');
             $table->decimal('confidence', 5, 4)->default(0);

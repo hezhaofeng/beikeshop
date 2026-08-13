@@ -21,8 +21,6 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Schema;
-use Plugin\CyberCloak\Services\CatalogOrderService;
 
 class OrderRepo
 {
@@ -134,27 +132,6 @@ class OrderRepo
             $builder->whereIn('status', $statuses);
         }
 
-        $catalogMode = $filters['catalog_mode'] ?? '';
-        if ($catalogMode) {
-            $builder->whereHas('orderProducts', function ($query) use ($catalogMode): void {
-                $query->where('catalog_mode', $catalogMode);
-            });
-        }
-
-        $fulfillmentSku = trim((string) ($filters['fulfillment_sku'] ?? ''));
-        if ($fulfillmentSku !== '') {
-            $builder->whereHas('orderProducts', function ($query) use ($fulfillmentSku): void {
-                $query->where('fulfillment_sku', 'like', "%{$fulfillmentSku}%");
-            });
-        }
-
-        $mappingVersion = trim((string) ($filters['catalog_mapping_version'] ?? $filters['mapping_version'] ?? ''));
-        if ($mappingVersion !== '') {
-            $builder->whereHas('orderProducts', function ($query) use ($mappingVersion): void {
-                $query->where('catalog_mapping_version', $mappingVersion);
-            });
-        }
-
         // 回收站
         if (isset($filters['trashed']) && $filters['trashed']) {
             $builder->onlyTrashed();
@@ -234,14 +211,6 @@ class OrderRepo
         $totals     = $data['totals']   ?? [];
         $comment    = $data['comment']  ?? '';
         $orderTotal = collect($totals)->where('code', 'order_total')->first();
-        $cartProducts = $carts['carts'] ?? [];
-        if ($cartProducts instanceof Collection) {
-            $cartProducts = $cartProducts->all();
-        }
-
-        // 创建订单前重新校验履约身份和实际库存，避免购物车停留期间商品或映射已经变化。
-        app(CatalogOrderService::class)->validateCartItems($cartProducts);
-
         if ($customer) {
             $shippingAddressId = $current['shipping_address_id'] ?? 0;
             $paymentAddressId  = $current['payment_address_id']  ?? 0;
@@ -269,12 +238,7 @@ class OrderRepo
         $currency      = CurrencyRepo::findByCode($currencyCode);
         $currencyValue = $currency->value ?? 1;
 
-        $hasPublicCatalogItem = collect($cartProducts)->contains(function ($item): bool {
-            $mode = is_array($item) ? ($item['catalog_mode'] ?? '') : ($item->catalog_mode ?? '');
-
-            return $mode === \Plugin\CyberCloak\Services\StoreContext::PUBLIC;
-        });
-        $orderData = [
+        $order = new Order([
             'number'                 => self::generateOrderNumber(),
             'customer_id'            => $customer->id                ?? 0,
             'customer_group_id'      => $customer->customer_group_id ?? 0,
@@ -318,16 +282,10 @@ class OrderRepo
             'payment_address_1'      => $paymentAddress->address_1,
             'payment_address_2'      => $paymentAddress->address_2,
             'payment_zipcode'        => $paymentAddress->zipcode,
-        ];
-        if (Schema::hasColumn('orders', 'catalog_review_status')) {
-            // 展示订单先进入待审核，真实订单保持原有直接履约行为。
-            $orderData['catalog_review_status'] = $hasPublicCatalogItem ? 'pending' : 'not_required';
-        }
-
-        $order = new Order($orderData);
+        ]);
         $order->saveOrFail();
 
-        OrderProductRepo::createOrderProducts($order, $cartProducts);
+        OrderProductRepo::createOrderProducts($order, $carts['carts']);
         OrderTotalRepo::createTotals($order, $totals);
 
         hook_filter('repository.order.create.after', ['order' => $order, 'data' => $data]);

@@ -9,29 +9,15 @@ use Symfony\Component\HttpFoundation\IpUtils;
 class IpAccessService
 {
     /**
-     * 供应商同步服务只负责读取本地缓存，避免在前台请求中触发远程网络调用。
-     */
-    public function __construct(private readonly ?IpProviderSyncService $providerSync = null)
-    {
-    }
-
-    /**
      * 解析客户端 IP，并按黑名单优先、白名单其次的规则判断是否允许真实模式。
      *
-     * @return array{ip: string, allowed: bool, blacklisted: bool, whitelisted: bool, reputation: bool, provider_unavailable: bool}
+     * @return array{ip: string, allowed: bool, blacklisted: bool, whitelisted: bool, reputation: bool}
      */
     public function evaluate(Request $request): array
     {
-        $ip                  = $this->resolveClientIp($request);
-        $providerUnavailable = $this->provider()->isUnavailable();
-        $blacklisted         = $this->matchesAny($ip, array_merge(
-            $this->configuredList('ip_blacklist'),
-            $this->provider()->cachedRanges()
-        ));
-        if ($providerUnavailable) {
-            // 供应商缓存失效时按 fail_mode=public 处理，黑名单优先级仍保持不变。
-            $blacklisted = true;
-        }
+        $ip = $this->resolveClientIp($request);
+        // 基础黑名单只读取后台维护的地址和网段，不再依赖外部供应商缓存。
+        $blacklisted = $this->matchesAny($ip, $this->configuredList('ip_blacklist'));
         $whitelist   = $this->configuredList('ip_whitelist');
         $whitelisted = $this->matchesAny($ip, $whitelist);
         $reputation  = $this->matchesAny($ip, $this->configuredList('ip_reputation'));
@@ -42,7 +28,6 @@ class IpAccessService
             'blacklisted'          => $blacklisted,
             'whitelisted'          => $whitelisted,
             'reputation'           => $reputation,
-            'provider_unavailable' => $providerUnavailable,
         ];
     }
 
@@ -130,13 +115,4 @@ class IpAccessService
         return false;
     }
 
-    /**
-     * 获取可选的供应商服务，保证旧版本未注册阶段六服务时仍可执行基础 IP 判断。
-     */
-    private function provider(): IpProviderSyncService
-    {
-        return $this->providerSync ?: (app()->bound(IpProviderSyncService::class)
-            ? app(IpProviderSyncService::class)
-            : new IpProviderSyncService(new IpProviderRegistry, new IpRangeNormalizer));
-    }
 }

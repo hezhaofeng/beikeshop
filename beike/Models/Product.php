@@ -77,12 +77,8 @@ class Product extends Base
     {
         $customer   = current_customer();
         $customerId = $customer ? $customer->id : 0;
-        $mode       = app(\Plugin\CyberCloak\Services\CatalogCartItemService::class)->currentMode();
 
-        return $this->hasOne(CustomerWishlist::class)
-            ->where('customer_id', $customerId)
-            ->where('catalog_mode', $mode)
-            ->where('catalog_product_id', $this->getKey());
+        return $this->hasOne(CustomerWishlist::class)->where('customer_id', $customerId);
     }
 
     public function getUrlAttribute()

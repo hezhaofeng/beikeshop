@@ -27,9 +27,6 @@ class OrderSimple extends JsonResource
             'created_at'    => $this->created_at,
             'updated_at'    => $this->updated_at,
             'status_format' => $this->status_format,
-            'catalog_modes'        => $this->orderProducts->pluck('catalog_mode')->filter()->unique()->values()->all(),
-            'catalog_review_status' => $this->catalog_review_status,
-            'catalog_review_note'   => $this->catalog_review_note,
         ];
 
         return $data;

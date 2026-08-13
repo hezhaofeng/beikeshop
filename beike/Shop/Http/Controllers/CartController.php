@@ -8,7 +8,6 @@ use Beike\Shop\Services\CartService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Plugin\CyberCloak\Services\CatalogCartItemService;
 
 class CartController extends Controller
 {
@@ -88,11 +87,9 @@ class CartController extends Controller
             $buyNow   = (bool) $request->buy_now ?? false;
             $customer = current_customer();
 
-            $catalog = app(CatalogCartItemService::class);
-            $sku     = $catalog->findSellableSkuById($catalog->currentMode(), (int) $skuId);
-            if (! $sku) {
-                throw (new \Illuminate\Database\Eloquent\ModelNotFoundException)->setModel(ProductSku::class, [$skuId]);
-            }
+            $sku = ProductSku::query()
+                ->whereRelation('product', 'active', '=', true)
+                ->findOrFail($skuId);
 
             if ($buyNow) {
                 $cart = CartService::add($sku, $quantity, $customer);

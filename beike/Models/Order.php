@@ -35,7 +35,6 @@ class Order extends Base
         'shipping_address_1', 'shipping_zipcode', 'shipping_address_2', 'payment_method_code', 'payment_method_name',
         'payment_customer_name', 'payment_calling_code', 'payment_telephone', 'payment_country', 'payment_country_id',
         'payment_zone', 'payment_zone_id', 'payment_city', 'payment_address_1', 'payment_address_2', 'payment_zipcode',
-        'catalog_review_status', 'catalog_reviewed_by', 'catalog_reviewed_at', 'catalog_review_note',
     ];
 
     protected $appends = ['status_format', 'total_format'];

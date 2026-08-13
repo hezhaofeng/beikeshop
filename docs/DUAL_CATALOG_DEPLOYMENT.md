@@ -1,6 +1,6 @@
 # cyberCloak 插件：同域双商品库部署与数据改造流程
 
-> 当前代码状态：本文同时记录最终部署目标和阶段一至阶段六基础能力。当前版本已交付请求上下文、展示库基础表、JSON 导入、SKU 映射重建、前台浏览切库、购物车/收藏来源隔离、订单快照、履约库存链路和供应商 IP 本地缓存同步；支付插件回调与真实数据库仍需在沙箱中联调。
+> 当前代码状态：本文同时记录最终部署目标和阶段一至阶段六基础能力。当前版本已交付请求上下文、展示库基础表、JSON 导入、SKU 映射重建、前台浏览切库、购物车/收藏来源隔离、订单快照、履约库存链路，以及本地 GeoIP 和云 IP 汇总识别；支付插件回调与真实数据库仍需在沙箱中联调。
 
 ## 1. 部署拓扑
 
@@ -74,19 +74,16 @@ CYBER_CLOAK_PREVENT_SHARED_CACHE=true
 CYBER_CLOAK_TRUSTED_PROXY_IPS=
 CYBER_CLOAK_CLOUDFLARE_ENABLED=true
 
-# 阶段六供应商同步配置
-CYBER_CLOAK_IP_PROVIDER_ENABLED=false
-CYBER_CLOAK_IP_PROVIDER=http
-CYBER_CLOAK_IP_PROVIDER_ENDPOINT=
-CYBER_CLOAK_IP_PROVIDER_TOKEN=
-CYBER_CLOAK_IP_PROVIDER_TIMEOUT=5
-CYBER_CLOAK_IP_PROVIDER_CACHE_TTL=60
-CYBER_CLOAK_IP_PROVIDER_FAIL_MODE=public
-CYBER_CLOAK_IP_PROVIDER_ALLOW_EMPTY=false
-CYBER_CLOAK_IP_PROVIDER_SCHEDULE=hourly
+# 本地 GeoIP 与云 IP 汇总库
+CYBER_CLOAK_IP_REPUTATION=
+CYBER_CLOAK_GEOIP_ENABLED=true
+CYBER_CLOAK_GEOIP_COUNTRY_DATABASE=/data/geoip/GeoLite2-Country.mmdb
+CYBER_CLOAK_GEOIP_ASN_DATABASE=/data/geoip/GeoLite2-ASN.mmdb
+CYBER_CLOAK_GEOIP_ANONYMOUS_DATABASE=
+CYBER_CLOAK_CLOUD_IP_RANGES_DATABASE=/data/geoip/cloud-ip-ranges.json
 ```
 
-密码、供应商 Token 和证书使用服务器环境变量或密钥管理系统保存。文档、Git 和日志中不记录真实密钥。
+密码和证书使用服务器环境变量或密钥管理系统保存。文档、Git 和日志中不记录真实密钥。
 
 若首页 URL 是 `http://`，必须将 `CYBER_CLOAK_COOKIE_SECURE=false`；否则浏览器会丢弃真实站 Cookie，后续分类、购物车等请求会回到展示库。首页 Banner 的图片文件不属于插件代码包，需同步 `public/image/catalog/` 下被装修配置引用的原图。
 
@@ -143,6 +140,22 @@ php artisan optimize:clear
 
 迁移通过 `catalog_public` 连接创建展示库表，通过默认连接创建主库映射表。当前仓库不使用 `php artisan migrate` 自动加载未安装插件的迁移。
 
+首页 Banner 图片映射迁移会在主库创建 `catalog_home_banner_mappings`。它只保存真实图片字段到 Cloak 图片字段的映射，不复制首页布局；迁移完成后需要在后台扫描并填写目标图片。
+
+### 大目录索引升级
+
+商品规模达到数万条时，前台不能在每次请求时读取完整 SKU 映射并生成 `WHERE IN`。新版会在 `catalog_public` 创建 `catalog_published_sku_mappings` 本地索引，发布映射时分批同步，前台通过索引关联过滤。
+
+已存在 `published` 映射的环境按以下顺序升级，不需要重新生成商品或分类映射：
+
+```bash
+php artisan migrate --force --path=plugins/CyberCloak/Migrations/2026_08_07_000011_create_catalog_published_sku_mappings.php
+php artisan cyber-cloak:sync-published-sku-index
+php artisan optimize:clear
+```
+
+同步命令必须在插件启用后执行；它只接受已发布映射版本，可通过 `--mapping-version=VERSION` 指定版本。
+
 ### 导入展示商品
 
 导入顺序建议为：
@@ -166,6 +179,14 @@ SKU和规格
 - 图片 URL可以从同域访问。
 - 价格、税费、重量和物流数据完整。
 - 分类和品牌关联完整。
+
+### 首页 Banner 图片初始化
+
+1. 确认 Cloak 图片已经上传到 `public/image/catalog/`，并能通过当前域名直接访问；
+2. 在 `cyberCloak` 映射面板点击“扫描 Banner 图片”；
+3. 为每个真实 Banner 填写 Cloak 图片路径或图片 JSON，保存为“已启用”；
+4. 点击“清除缓存”，分别使用真实 key 和无 key 请求首页检查图片 URL；
+5. 任何“待配置”项都会在展示模式隐藏源图片，完成全部映射后再开放展示流量。
 
 ## 7. SKU 映射构建
 
@@ -262,23 +283,25 @@ php artisan cyber-cloak:rebuild-route-mappings --type=category
 
 数字 URL 映射完成后，展示商品模型不能直接使用自身数据库 ID生成站内链接。商品资源应使用请求中的原始 `url_id`，保证 `/products/123` 在两种模式下仍然是同一个 URL。
 
-## 9. IP 黑名单同步
+## 9. GeoIP 与云 IP 汇总库
 
-供应商配置完成后执行首次同步：
+将 Country、ASN 和匿名 IP MMDB 文件放在 PHP-FPM 可读的本地目录。云 IP 汇总库使用本地 JSON，不在前台请求时拉取外部地址。推荐结构：
 
-```bash
-php artisan cyber-cloak:test-ip-provider
-php artisan cyber-cloak:sync-ip-provider --dry-run
-php artisan cyber-cloak:sync-ip-provider
+```json
+{
+  "version": 1,
+  "updated_at": "2026-08-04T00:00:00Z",
+  "providers": {
+    "AWS": ["3.5.140.0/22"],
+    "GCP": ["34.64.0.0/10"],
+    "CLOUDFLARE": ["173.245.48.0/20"]
+  }
+}
 ```
 
-启用插件后，调度器会按 `ip_provider_schedule` 设置自动执行 `cyber-cloak:sync-ip-provider`。也可以手动执行：
+也兼容记录数组，例如 `[{"provider":"AWS","cidr":"3.5.140.0/22"}]`。文件替换后按修改时间自动重新加载；后台“高级设置”保存路径后执行 `php artisan optimize:clear` 并重启 PHP-FPM、Horizon 等常驻进程。
 
-```cron
-php artisan schedule:run
-```
-
-请求过程使用本地数据库缓存。供应商接口超时不阻塞用户页面请求；`public` 失败策略在缓存过期或阶段六表缺失时强制进入展示模式，`keep` 策略保留仍未过期的旧缓存。
+云网段命中标记为 `DATACENTER` 并返回厂商；仅 ASN 命中标记为 `ISP_LIKELY`，不应把这类结果解释为家庭 IP 或直接视为恶意流量。历史 `cyber_cloak_ip_provider_*` 表在升级时保留，但插件已停止读写和调度它们。
 
 ## 10. Nginx 与真实 IP
 

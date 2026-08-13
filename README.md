@@ -148,12 +148,12 @@ php artisan migrate
    ./install.sh
    ```
 
-   Or start the bundled Docker Compose profile manually:
+   Or start the bundled Nginx Docker Compose stack manually:
 
    ```bash
    cp .env.example .env
    printf "\nAPP_CODE_PATH=.\nDB_HOST=mysql\n" >> .env
-   docker compose --profile nginx up -d --build
+   docker compose up -d --build
    docker compose exec nginx composer install
    docker compose exec nginx php artisan beikeshop:install --force
    ```

@@ -31,12 +31,17 @@ class ProductSimple extends JsonResource
             throw new \Exception("invalid master sku for product {$this->id}");
         }
 
-        $name   = $this->description->name ?? '';
+        $name       = $this->description->name ?? '';
         $images     = array_filter($this->images ?? [], function ($image) {
             $isYouTube = str_contains($image, 'youtube.com/watch') || str_contains($image, 'youtu.be/');
+
             return ! str_ends_with($image, '.mp4') && ! $isYouTube;
         });
         $firstImage = ! empty($images) ? reset($images) : '';
+        // 展示库不保存客户收藏；关系未预加载时必须返回空值，避免触发跨库懒加载。
+        $wishlistId = $this->resource->relationLoaded('inCurrentWishlist')
+            ? ($this->resource->getRelation('inCurrentWishlist')?->id ?? 0)
+            : 0;
 
         $data = [
             'id'                  => $this->id,
@@ -49,7 +54,7 @@ class ProductSimple extends JsonResource
             'price_format'        => currency_format($masterSku->price),
             'origin_price_format' => currency_format($masterSku->origin_price),
             'category_id'         => $this->category_id           ?? null,
-            'in_wishlist'         => $this->inCurrentWishlist->id ?? 0,
+            'in_wishlist'         => $wishlistId,
             'status'              => $this->active,
             'image'               => $firstImage,
             'image_format'        => $firstImage ? image_resize($firstImage) : '',

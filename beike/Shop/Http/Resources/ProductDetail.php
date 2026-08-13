@@ -26,6 +26,10 @@ class ProductDetail extends JsonResource
 
             return ! str_ends_with($image, '.mp4') && ! $isYouTube;
         });
+        // 展示库不保存客户收藏；关系未预加载时必须返回空值，避免触发跨库懒加载。
+        $wishlistId = $this->resource->relationLoaded('inCurrentWishlist')
+            ? ($this->resource->getRelation('inCurrentWishlist')?->id ?? 0)
+            : 0;
 
         $data = [
             'id'               => $this->id,
@@ -49,7 +53,7 @@ class ProductDetail extends JsonResource
             'attributes'       => $this->formatAttributes(),
             'variables'        => $this->decodeVariables($this->variables),
             'skus'             => SkuDetail::collection($this->skus)->jsonSerialize(),
-            'in_wishlist'      => $this->inCurrentWishlist->id ?? 0,
+            'in_wishlist'      => $wishlistId,
             'active'           => (bool) $this->active,
         ];
 

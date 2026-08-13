@@ -241,8 +241,8 @@ class PluginServiceProvider extends ServiceProvider
      */
     private function registerMiddlewareToGroup($router, string $pluginCode, string $group, string $middleware): void
     {
-        if ($pluginCode === 'CyberCloak') {
-            // 商品库上下文要晚于 Cookie 解密，但必须先于 SubstituteBindings。
+        if (in_array($pluginCode, ['CyberCloak', 'CyberCloakSimple'], true)) {
+            // 商品上下文要晚于 Cookie 解密，但必须先于 ShareViewData 和 SubstituteBindings。
             $this->insertMiddlewareBeforeBindings($router, $group, $middleware);
 
             return;

@@ -13,7 +13,11 @@ class TrafficFunnelService
 
     private bool $settingsLoaded = false;
 
-    public function __construct(private readonly ?MaxMindIpIntelligence $intelligence = null)
+    public function __construct(
+        private readonly ?MaxMindIpIntelligence $intelligence = null,
+        private readonly ?TrafficBehaviorService $behavior = null,
+        private readonly ?TrafficRiskAuditService $riskAudit = null,
+    )
     {
     }
 
@@ -23,7 +27,7 @@ class TrafficFunnelService
      * 只有 query key 和签名 Cookie 校验失败的请求才进入这里；有效凭据由 CatalogResolver 直接进入真实站。
      * 每个信号都返回原因码，便于 Shadow Mode、误杀分析和后台审计。
      *
-     * @param array{ip:string,blacklisted:bool,provider_unavailable:bool} $ipResult
+     * @param array{ip:string,blacklisted:bool} $ipResult
      * @return array{action:string,stage:string,score:int,reasons:array<int,string>,signals:array<string,mixed>,ip:string}
      */
     public function evaluate(Request $request, array $ipResult): array
@@ -48,22 +52,34 @@ class TrafficFunnelService
         if (! filter_var($ip, FILTER_VALIDATE_IP)) {
             $this->addSignal($result, 100, 'invalid_client_ip', true);
 
-            return $this->decision($result, 80, 'fast');
+            return $this->decision($request, $result, 80, 'fast');
         }
 
-        // 第一层：静态黑名单已经在 IpAccessService 合并了后台规则和供应商缓存。
+        // 第一层：静态黑名单已经在 IpAccessService 完成地址和网段匹配。
         if (($ipResult['blacklisted'] ?? false) === true) {
             $this->addSignal($result, 100, 'static_ip_blacklist', true);
 
-            return $this->decision($result, 80, 'fast');
+            return $this->decision($request, $result, 80, 'fast');
+        }
+
+        // 人工封禁是高优先级风险信号；可信状态只跳过行为计分，不跳过基础规则。
+        $manualRiskStatus = ($this->riskAudit ?: new TrafficRiskAuditService)->profileStatus($ip);
+        if ($manualRiskStatus === 'blocked') {
+            $this->addSignal($result, 100, 'manual_risk_block', $manualRiskStatus);
+
+            return $this->decision($request, $result, 80, 'fast');
+        }
+        if ($manualRiskStatus === 'suspicious') {
+            // 人工可疑结论保留为软信号，仍由总阈值决定挑战或封禁动作。
+            $this->addSignal($result, 20, 'manual_risk_suspicious', $manualRiskStatus);
         }
 
         $policy            = $this->policySignals($request, $ipResult);
         $result['signals'] = array_merge($result['signals'], $policy['signals']);
         foreach ($policy['reasons'] as $reason) {
             $this->addSignal($result, match ($reason) {
-                'country_blocked'      => 45,
-                'country_not_allowed'  => 35,
+                // 配置允许国家后，未知或不匹配来源固定进入展示漏斗。
+                'country_not_allowed'  => $challengeThreshold,
                 'language_not_allowed' => 30,
                 'ua_blacklist'         => 60,
                 'malformed_user_agent' => 10,
@@ -87,6 +103,12 @@ class TrafficFunnelService
         if (($intelligence['anonymous'] ?? null) === true) {
             $this->addSignal($result, 30, 'anonymous_ip', true);
         }
+        if (($intelligence['network_type'] ?? '') === 'DATACENTER') {
+            $this->addSignal($result, 20, 'cloud_ip_range', [
+                'provider' => $intelligence['cloud_provider'] ?? 'CLOUD',
+                'cidr'     => $intelligence['cloud_range'] ?? null,
+            ]);
+        }
 
         $datacenterAsns = $this->integerListSetting('traffic_datacenter_asns');
         if ($asn > 0 && in_array($asn, $datacenterAsns, true)) {
@@ -95,7 +117,31 @@ class TrafficFunnelService
 
         // 核心风控已经达到封禁阈值时直接结束，避免继续消耗频控和深度检测资源。
         if ($result['score'] >= $blockThreshold) {
-            return $this->decision($result, $blockThreshold, 'core', null, $challengeThreshold);
+            return $this->decision($request, $result, $blockThreshold, 'core', null, $challengeThreshold);
+        }
+
+        // 行为画像只覆盖没有有效 key 或签名 Cookie 的请求，识别新 Bot 的高频和路由扫描模式。
+        if ($manualRiskStatus !== 'trusted') {
+            $behavior = ($this->behavior ?: new TrafficBehaviorService)->observe(
+                $request,
+                $ip,
+                $this->behaviorPolicy(),
+                [
+                    'asn'            => $asn > 0 ? $asn : null,
+                    'risk_asn'       => $asn > 0 && in_array($asn, $blockedAsns, true),
+                    'anonymous'      => ($intelligence['anonymous'] ?? null) === true,
+                    'datacenter'     => ($intelligence['network_type'] ?? '') === 'DATACENTER'
+                        || ($asn > 0 && in_array($asn, $datacenterAsns, true)),
+                    'cloud_provider' => $intelligence['cloud_provider'] ?? null,
+                    'network_type'   => (string) ($intelligence['network_type'] ?? 'UNKNOWN'),
+                ],
+            );
+            $result['signals'] = array_merge($result['signals'], $behavior['signals']);
+            foreach ($behavior['reasons'] as $reason) {
+                $this->addSignal($result, (int) ($behavior['scores'][$reason] ?? 0), $reason, $behavior['signals'][$reason] ?? true);
+            }
+        } else {
+            $result['signals']['manual_risk_status'] = 'trusted';
         }
 
         // 第三层：频控默认关闭，启用后使用 Laravel RateLimiter，避免引入额外表结构。
@@ -119,7 +165,7 @@ class TrafficFunnelService
 
         // 规则层已经达到阈值时不再执行浏览器深度识别。
         if ($result['score'] >= $blockThreshold) {
-            return $this->decision($result, $blockThreshold, 'rules', null, $challengeThreshold);
+            return $this->decision($request, $result, $blockThreshold, 'rules', null, $challengeThreshold);
         }
 
         // 第四层：服务端只采集弱指纹和自动化线索，浏览器指纹脚本按路由另行接入。
@@ -132,6 +178,7 @@ class TrafficFunnelService
         }
 
         return $this->decision(
+            $request,
             $result,
             $blockThreshold,
             'deep',
@@ -143,7 +190,7 @@ class TrafficFunnelService
     /**
      * 汇总动作阈值；Shadow Mode 可只记录结果而由调用方继续展示模式。
      */
-    private function decision(array $result, int $blockThreshold, string $stage, string $reason = null, int $challengeThreshold = 50): array
+    private function decision(Request $request, array $result, int $blockThreshold, string $stage, string $reason = null, int $challengeThreshold = 50): array
     {
         if ($reason !== null) {
             $result['reasons'][] = $reason;
@@ -158,6 +205,14 @@ class TrafficFunnelService
         } elseif ($result['score'] > 0) {
             $result['action'] = 'observe';
         }
+
+        // 所有决策路径都经过此处，避免快速黑名单和深度识别出现审计遗漏。
+        ($this->riskAudit ?: new TrafficRiskAuditService)->record(
+            $request,
+            $result,
+            $this->boolSetting('traffic_risk_audit_enabled', true),
+            max(1, (int) $this->setting('traffic_risk_audit_threshold', 20)),
+        );
 
         return $result;
     }
@@ -198,6 +253,9 @@ class TrafficFunnelService
             'asn'          => null,
             'organization' => null,
             'anonymous'    => null,
+            'cloud_provider' => null,
+            'network_type' => 'UNKNOWN',
+            'cloud_range'  => null,
             'available'    => false,
             'source'       => 'none',
         ];
@@ -208,7 +266,6 @@ class TrafficFunnelService
         $country           = strtoupper((string) ($intelligence['country'] ?? ''));
         $languages         = $this->requestLanguages($request);
         $allowedCountries  = $this->listSetting('traffic_allowed_countries');
-        $blockedCountries  = $this->listSetting('traffic_blocked_countries');
         $allowedLanguages  = $this->listSetting('traffic_allowed_languages');
         $uaBlacklist       = $this->listSetting('traffic_user_agent_blacklist');
         $reasons           = [];
@@ -218,18 +275,17 @@ class TrafficFunnelService
             'asn'           => $intelligence['asn'],
             'organization'  => $intelligence['organization'],
             'anonymous'     => $intelligence['anonymous'],
+            'cloud_provider' => $intelligence['cloud_provider'] ?? null,
+            'network_type' => $intelligence['network_type'] ?? 'UNKNOWN',
+            'cloud_range'  => $intelligence['cloud_range'] ?? null,
             'languages'     => $languages,
             'user_agent'    => $userAgent !== '' ? $userAgent : null,
         ];
 
-        // 国家、语言和 UA 仅作为无凭据流量的漏斗信号，未知国家同样增加风险分。
+        // 国家、语言和 UA 仅作为无凭据流量的漏斗信号；允许国家配置存在时，未知国家也进入展示漏斗。
         if ($allowedCountries !== [] && ($country === '' || ! in_array($country, $allowedCountries, true))) {
             $reasons[]                      = 'country_not_allowed';
             $signals['country_not_allowed'] = $country !== '' ? $country : 'unknown';
-        }
-        if ($country !== '' && in_array($country, $blockedCountries, true)) {
-            $reasons[]                  = 'country_blocked';
-            $signals['country_blocked'] = $country;
         }
         if ($allowedLanguages !== [] && ! $this->matchesLanguageWhitelist($languages, $allowedLanguages)) {
             $reasons[]                       = 'language_not_allowed';
@@ -336,6 +392,24 @@ class TrafficFunnelService
     }
 
     /**
+     * 将后台行为识别设置转换为缓存服务所需的紧凑策略。
+     *
+     * @return array{enabled:bool,window:int,max_requests:int,max_routes:int,invalid_cookie_max:int,score:int,cookie_name:string}
+     */
+    private function behaviorPolicy(): array
+    {
+        return [
+            'enabled'            => $this->boolSetting('traffic_behavior_enabled', true),
+            'window'             => max(1, (int) $this->setting('traffic_behavior_window', 60)),
+            'max_requests'       => max(1, (int) $this->setting('traffic_behavior_max_requests', 60)),
+            'max_routes'         => max(1, (int) $this->setting('traffic_behavior_max_routes', 12)),
+            'invalid_cookie_max' => max(1, (int) $this->setting('traffic_behavior_invalid_cookie_max', 3)),
+            'score'              => max(1, min(100, (int) $this->setting('traffic_behavior_score', 20))),
+            'cookie_name'        => (string) config('cyber_cloak.cookie_name', 'beike_context'),
+        ];
+    }
+
+    /**
      * 读取动态设置，数据库未安装时回退到插件配置。
      */
     private function setting(string $name, mixed $default): mixed
@@ -380,9 +454,12 @@ class TrafficFunnelService
                 ->where('space', 'cyber_cloak')
                 ->whereIn('name', [
                     'traffic_funnel_enabled', 'traffic_allowed_countries', 'traffic_blocked_asns',
-                    'traffic_blocked_countries', 'traffic_datacenter_asns', 'traffic_rate_limit_enabled', 'traffic_rate_limit_max',
+                    'traffic_datacenter_asns', 'traffic_rate_limit_enabled', 'traffic_rate_limit_max',
                     'traffic_rate_limit_decay', 'traffic_block_threshold', 'traffic_challenge_threshold',
                     'traffic_fingerprint_cookie', 'traffic_allowed_languages', 'traffic_user_agent_blacklist',
+                    'traffic_behavior_enabled', 'traffic_behavior_window', 'traffic_behavior_max_requests',
+                    'traffic_behavior_max_routes', 'traffic_behavior_invalid_cookie_max', 'traffic_behavior_score',
+                    'traffic_risk_audit_enabled', 'traffic_risk_audit_threshold',
                 ])
                 ->get()
                 ->each(function ($setting): void {

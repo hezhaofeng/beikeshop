@@ -11,7 +11,6 @@ class ConfirmSkuMapping extends Command
                             {version : 映射版本号}
                             {real_sku_id : 真实 SKU ID}
                             {public_sku_id : 展示 SKU ID}
-                            {--fulfillment-sku= : 可选履约 SKU，默认使用真实 SKU}
                             {--publish : 确认后尝试发布版本}';
 
     protected $description = '确认 cyberCloak 的待处理 SKU 映射';
@@ -25,8 +24,7 @@ class ConfirmSkuMapping extends Command
             $result = $mappings->confirm(
                 (string) $this->argument('version'),
                 (int) $this->argument('real_sku_id'),
-                (int) $this->argument('public_sku_id'),
-                $this->option('fulfillment-sku') ? (string) $this->option('fulfillment-sku') : null
+                (int) $this->argument('public_sku_id')
             );
             $this->info("SKU 映射已确认：真实 {$result['real_sku_id']} -> 展示 {$result['public_sku_id']}");
 

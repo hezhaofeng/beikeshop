@@ -75,6 +75,22 @@ class CatalogResolverTest extends TestCase
     }
 
     /**
+     * 后台生成的签名分享链接应与原始 key 一样进入真实模式。
+     */
+    public function test_valid_signed_share_link_enters_real_mode_without_redirect(): void
+    {
+        $accessKeys = new AccessKeyService;
+        $ticket     = (new ContextTicketService($accessKeys))->issue($accessKeys->findValid(self::PLAIN_KEY));
+        $request    = Request::create('/products?key=' . rawurlencode($ticket), 'GET', [], [], [], ['REMOTE_ADDR' => '127.0.0.1']);
+        $resolution = $this->resolver()->resolve($request);
+
+        $this->assertSame('real', $resolution['mode']);
+        $this->assertSame('query_key', $resolution['reason']);
+        $this->assertSame('test-key-id', $resolution['key_id']);
+        $this->assertNull($request->query('key'));
+    }
+
+    /**
      * 有效 Cookie 应维持真实模式，并在续期窗口到达后重新签发票据。
      */
     public function test_valid_cookie_enters_real_mode_and_refreshes(): void

@@ -3,30 +3,130 @@
 namespace Plugin\CyberCloak\Controllers;
 
 use Beike\Admin\Http\Controllers\Controller;
-use Beike\Models\Order;
 use Beike\Repositories\SettingRepo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
+use Plugin\CyberCloak\Jobs\RebuildProductMappingsJob;
 use Plugin\CyberCloak\Services\AccessKeyService;
 use Plugin\CyberCloak\Services\CatalogRouteService;
+use Plugin\CyberCloak\Services\HomeBannerImageMappingService;
 use Plugin\CyberCloak\Services\HomeDesignMappingService;
-use Plugin\CyberCloak\Services\IpProviderSyncService;
+use Plugin\CyberCloak\Services\MappingTaskService;
 use Plugin\CyberCloak\Services\SkuMappingService;
+use Plugin\CyberCloak\Services\TrafficRiskAuditService;
 
 class AdminCyberCloakController extends Controller
 {
     /**
+     * 保存 CyberCloak 设置，名单类字段始终持久化为干净的 JSON 数组。
+     */
+    public function updateSettings(Request $request): mixed
+    {
+        $columns = collect(require dirname(__DIR__) . '/columns.php')->keyBy('name');
+        $fields  = [];
+        $rules   = [];
+
+        foreach ($columns as $name => $column) {
+            if (! $request->has($name)) {
+                continue;
+            }
+
+            $value = $request->input($name);
+            if (($column['type'] ?? '') === 'select-multiple') {
+                $value = $this->normalizeMultiValue($value);
+            } elseif (($column['type'] ?? '') === 'bool') {
+                $value = $request->boolean($name) ? 1 : 0;
+            }
+
+            $fields[$name] = $value;
+            $rules[$name]  = $column['rules'] ?? 'nullable';
+        }
+
+        if ($request->has('status')) {
+            $fields['status'] = $request->boolean('status') ? 1 : 0;
+            $rules['status']  = 'nullable|boolean';
+        }
+
+        $validator = app('validator')->make($fields, $rules);
+        if ($validator->fails()) {
+            return back()->withErrors($validator)->withInput();
+        }
+
+        SettingRepo::update('plugin', 'cyber_cloak', $validator->validated());
+        Log::info('CyberCloak 后台保存插件配置', [
+            'fields'   => array_keys($validator->validated()),
+            'admin_id' => auth()->id(),
+        ]);
+
+        return redirect(admin_route('plugins.edit', ['cyber_cloak']))->with('success', 'CyberCloak 配置已保存');
+    }
+
+    /**
+     * 返回只读运行状态，便于在保存规则前确认插件和两套商品库均已可用。
+     */
+    public function runtimeStatus(): mixed
+    {
+        return json_success('运行状态已更新', [
+            'plugin'      => $this->pluginStatus(),
+            'connections' => [
+                'real'   => $this->connectionStatus('real'),
+                'public' => $this->connectionStatus('public'),
+            ],
+        ]);
+    }
+
+    /**
      * 返回映射版本、待确认 SKU 和当前路由统计，供插件编辑页展示。
      */
-    public function mappingStatus(Request $request, SkuMappingService $mappings): mixed
+    public function mappingStatus(Request $request, SkuMappingService $mappings, HomeDesignMappingService $designMappings, HomeBannerImageMappingService $bannerImages, MappingTaskService $tasks): mixed
     {
         try {
-            return json_success('映射状态已更新', $mappings->dashboard($request->input('version')));
+            $dashboard                  = $mappings->dashboard($request->input('version'));
+            $dashboard['home']          = $designMappings->scan();
+            $dashboard['banner_images'] = $bannerImages->scan();
+            // 部署代码与插件迁移之间的短暂窗口不应阻断原有映射状态查看。
+            $dashboard['task'] = rescue(fn (): ?array => $tasks->latest(), null, false);
+
+            return json_success('映射状态已更新', $dashboard);
         } catch (\Throwable $exception) {
             return json_fail('读取映射状态失败：' . $exception->getMessage());
         }
+    }
+
+    /**
+     * 返回风险 IP 档案，供高级设置内的人工审核面板使用。
+     */
+    public function trafficRiskProfiles(Request $request, TrafficRiskAuditService $audit): mixed
+    {
+        $data = $request->validate([
+            'status'   => 'nullable|in:unreviewed,trusted,suspicious,blocked',
+            'page'     => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+
+        return json_success('风险 IP 审核数据已读取', $audit->profiles(
+            $data['status'] ?? null,
+            (int) ($data['page'] ?? 1),
+            (int) ($data['per_page'] ?? 20),
+        ));
+    }
+
+    /**
+     * 保存风险 IP 的人工审核结论；封禁状态会参与后续无凭据漏斗判断。
+     */
+    public function reviewTrafficRisk(int $profile, Request $request, TrafficRiskAuditService $audit): mixed
+    {
+        $data = $request->validate([
+            'status' => 'required|in:unreviewed,trusted,suspicious,blocked',
+            'note'   => 'nullable|string|max:2000',
+        ]);
+
+        if (! $audit->review($profile, $data['status'], $data['note'] ?? null, auth()->id())) {
+            return json_fail('风险 IP 档案不存在或审核状态未变化');
+        }
+
+        return json_success('风险 IP 审核状态已更新');
     }
 
     /**
@@ -52,30 +152,14 @@ class AdminCyberCloakController extends Controller
     /**
      * 从后台生成一个新的商品映射版本，默认使用精确匹配。
      */
-    public function rebuildMappings(Request $request, SkuMappingService $mappings): mixed
+    public function rebuildMappings(Request $request, MappingTaskService $tasks): mixed
     {
         $data = $request->validate([
             'mode'  => 'required|in:exact,candidate,random',
             'force' => 'nullable|boolean',
         ]);
 
-        try {
-            $result = $mappings->rebuild(
-                (string) $data['mode'],
-                null,
-                true,
-                (bool) ($data['force'] ?? false)
-            );
-            Log::info('CyberCloak 后台生成商品映射', [
-                'version'  => $result['version'],
-                'mode'     => $data['mode'],
-                'admin_id' => auth()->id(),
-            ]);
-
-            return json_success('商品映射已生成', $result);
-        } catch (\Throwable $exception) {
-            return json_fail('商品映射生成失败：' . $exception->getMessage());
-        }
+        return $this->submitProductMappingTask($data, false, $tasks);
     }
 
     /**
@@ -83,7 +167,7 @@ class AdminCyberCloakController extends Controller
      *
      * 分类链接和首页 Banner 检查由各自按钮负责，避免一次操作覆盖不相关的路由数据。
      */
-    public function rebuildProductMappings(Request $request, SkuMappingService $mappings, CatalogRouteService $routes): mixed
+    public function rebuildProductMappings(Request $request, MappingTaskService $tasks): mixed
     {
         $data = $request->validate([
             'mode'    => 'nullable|in:exact,candidate,random',
@@ -91,39 +175,61 @@ class AdminCyberCloakController extends Controller
             'version' => 'nullable|string|max:64',
         ]);
 
+        return $this->submitProductMappingTask($data, true, $tasks);
+    }
+
+    /**
+     * 返回任务状态给管理页面轮询，避免长耗时映射占用 Cloudflare 代理请求。
+     */
+    public function mappingTask(string $task, MappingTaskService $tasks): mixed
+    {
         try {
-            if (! empty($data['version'])) {
-                if (! $mappings->publishConfirmed((string) $data['version'])) {
-                    return json_fail('当前商品映射仍有待确认或冲突项', ['version' => $data['version']]);
-                }
-                $result = [
-                    'version'   => (string) $data['version'],
-                    'published' => true,
-                    'confirmed' => 0,
-                    'pending'   => 0,
-                    'conflict'  => 0,
-                ];
-            } else {
-                $result = $mappings->rebuild(
-                    (string) ($data['mode'] ?? 'exact'),
-                    null,
-                    true,
-                    (bool) ($data['force'] ?? false)
-                );
+            $data = $tasks->find($task);
+            if (! $data) {
+                return json_fail('映射任务不存在', [], 404);
             }
-            $result['product_routes'] = $result['published']
-                ? $routes->rebuild('product', $result['version'])
-                : null;
-            Log::info('CyberCloak 后台执行商品 SKU 映射', [
-                'version'   => $result['version'],
-                'mode'      => $data['mode'] ?? 'exact',
-                'published' => $result['published'],
-                'admin_id'  => auth()->id(),
+
+            return json_success('映射任务状态已更新', $data);
+        } catch (\Throwable $exception) {
+            return json_fail('读取映射任务失败：' . $exception->getMessage());
+        }
+    }
+
+    /**
+     * 将生成或发布商品映射的请求入队；是否同步商品链接由调用入口决定。
+     *
+     * @param array<string,mixed> $data
+     */
+    private function submitProductMappingTask(array $data, bool $syncRoutes, MappingTaskService $tasks): mixed
+    {
+        $task = null;
+
+        try {
+            $version = trim((string) ($data['version'] ?? ''));
+            $task    = $tasks->createProductTask(
+                $version === '' ? 'rebuild' : 'publish',
+                $version === '' ? (string) ($data['mode'] ?? 'exact') : null,
+                $version !== '' ? $version : null,
+                $syncRoutes,
+                (bool) ($data['force'] ?? false),
+                auth()->id() ? (int) auth()->id() : null
+            );
+            RebuildProductMappingsJob::dispatch($task['id']);
+            Log::info('CyberCloak 后台提交商品映射任务', [
+                'task_id'     => $task['id'],
+                'action'      => $task['action'],
+                'mode'        => $task['mode'],
+                'sync_routes' => $task['sync_routes'],
+                'admin_id'    => auth()->id(),
             ]);
 
-            return json_success('商品 SKU 与商品映射已处理', $result);
+            return json_success('商品映射任务已提交，请等待后台执行', ['task' => $task]);
         } catch (\Throwable $exception) {
-            return json_fail('商品 SKU 映射失败：' . $exception->getMessage());
+            if ($task) {
+                $tasks->fail($task['id'], $exception);
+            }
+
+            return json_fail('提交商品映射任务失败：' . $exception->getMessage());
         }
     }
 
@@ -173,6 +279,53 @@ class AdminCyberCloakController extends Controller
     }
 
     /**
+     * 将当前首页装修中的真实 Banner 图片登记到映射面板。
+     */
+    public function syncBannerImages(HomeBannerImageMappingService $bannerImages): mixed
+    {
+        try {
+            $result = $bannerImages->sync();
+            Log::info('CyberCloak 后台同步首页 Banner 图片映射', [
+                'image_count' => $result['image_count'],
+                'configured'  => $result['configured'],
+                'admin_id'    => auth()->id(),
+            ]);
+
+            return json_success('首页 Banner 图片已同步到映射面板', $result);
+        } catch (\Throwable $exception) {
+            return json_fail('首页 Banner 图片同步失败：' . $exception->getMessage());
+        }
+    }
+
+    /**
+     * 保存一条真实 Banner 到 Cloak 图片的目标路径或 JSON 结构。
+     */
+    public function updateBannerImage(int $mapping, Request $request, HomeBannerImageMappingService $bannerImages): mixed
+    {
+        $data = $request->validate([
+            'public_image' => 'nullable|string|max:65535',
+            'status'       => 'nullable|in:active,disabled',
+        ]);
+
+        try {
+            $result = $bannerImages->update(
+                $mapping,
+                $data['public_image'] ?? null,
+                (string) ($data['status'] ?? 'active')
+            );
+            Log::info('CyberCloak 后台保存首页 Banner 图片映射', [
+                'mapping_id' => $mapping,
+                'status'     => $data['status'] ?? 'active',
+                'admin_id'   => auth()->id(),
+            ]);
+
+            return json_success('首页 Banner 图片映射已保存', $result);
+        } catch (\Throwable $exception) {
+            return json_fail('首页 Banner 图片映射保存失败：' . $exception->getMessage());
+        }
+    }
+
+    /**
      * 清理设置、配置、视图和应用缓存，让首页装修及映射结果立即生效。
      */
     public function clearMappingCache(): mixed
@@ -196,15 +349,13 @@ class AdminCyberCloakController extends Controller
             'version'         => 'required|string|max:64',
             'real_sku_id'     => 'required|integer|min:1',
             'public_sku_id'   => 'required|integer|min:1',
-            'fulfillment_sku' => 'nullable|string|max:128',
         ]);
 
         try {
             $result = $mappings->confirm(
                 (string) $data['version'],
                 (int) $data['real_sku_id'],
-                (int) $data['public_sku_id'],
-                isset($data['fulfillment_sku']) ? (string) $data['fulfillment_sku'] : null
+                (int) $data['public_sku_id']
             );
             Log::info('CyberCloak 后台确认 SKU 映射', [
                 'version'       => $result['version'],
@@ -222,23 +373,11 @@ class AdminCyberCloakController extends Controller
     /**
      * 发布没有待确认项的映射版本。
      */
-    public function publishMapping(Request $request, SkuMappingService $mappings): mixed
+    public function publishMapping(Request $request, MappingTaskService $tasks): mixed
     {
-        $version = (string) $request->validate(['version' => 'required|string|max:64'])['version'];
+        $data = $request->validate(['version' => 'required|string|max:64']);
 
-        try {
-            if (! $mappings->publishConfirmed($version)) {
-                return json_fail('当前版本仍有待确认或冲突映射', ['version' => $version]);
-            }
-            Log::info('CyberCloak 后台发布商品映射', [
-                'version'  => $version,
-                'admin_id' => auth()->id(),
-            ]);
-
-            return json_success('商品映射已发布', ['version' => $version]);
-        } catch (\Throwable $exception) {
-            return json_fail('商品映射发布失败：' . $exception->getMessage());
-        }
+        return $this->submitProductMappingTask($data, false, $tasks);
     }
 
     /**
@@ -267,36 +406,76 @@ class AdminCyberCloakController extends Controller
     /**
      * 返回脱敏后的 key 列表，后台页面不应再次暴露历史明文 key。
      */
-    public function keys(AccessKeyService $keys): array
+    public function keys(AccessKeyService $keys): mixed
     {
-        $items = array_map(static function (array $record): array {
+        $items = array_map(function (array $record) use ($keys): array {
+            $id       = (string) $record['id'];
+            $plainKey = $keys->plainKeyForShare($id);
+            $validKey = $keys->findValidById($id) !== null;
+
             return [
-                'id'         => $record['id'],
-                'status'     => $record['status'],
-                'expires_at' => $record['expires_at'],
-                'hash'       => $record['hash'] ? substr((string) $record['hash'], 0, 8) . '...' : null,
+                'id'           => $record['id'],
+                'status'       => $record['status'],
+                'expires_at'   => $record['expires_at'],
+                'hash'         => $record['hash'] ? substr((string) $record['hash'], 0, 8) . '...' : null,
+                'shareable'    => $plainKey !== null && $validKey,
+                'share_reason' => $plainKey === null
+                    ? '该 key 仅保存了摘要，无法恢复原文；请重新创建后再分享'
+                    : ($validKey ? null : '该 key 已停用或已过期，无法生成分享链接'),
             ];
         }, $keys->all());
 
-        return ['items' => $items];
+        return json_success('访问 key 已读取', ['items' => $items]);
     }
 
     /**
-     * 使用管理员提交的明文 key 创建摘要记录，响应只返回一次明文 key。
+     * 使用管理员提交的明文 key 创建摘要记录，响应不回传明文 key。
      */
-    public function createKey(Request $request, AccessKeyService $keys): array
+    public function createKey(Request $request, AccessKeyService $keys): mixed
     {
         $data = $request->validate([
             'key'        => 'required|string|max:512',
             'expires_at' => 'nullable|date',
         ]);
-        $record = $keys->create($data['key'], isset($data['expires_at']) ? new \DateTimeImmutable($data['expires_at']) : null);
+        $expiresAt = $data['expires_at'] ?? null;
+        // 配置页使用日期控件，选择某天时应在当天结束后才失效。
+        if (is_string($expiresAt) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) {
+            $expiresAt .= ' 23:59:59';
+        }
+        $record = $keys->create($data['key'], $expiresAt ? new \DateTimeImmutable($expiresAt) : null);
 
-        return [
+        return json_success('访问 key 已保存', [
             'id'         => $record['id'],
-            'key'        => $data['key'],
+            'status'     => $record['status'],
             'expires_at' => $record['expires_at'],
-        ];
+            'hash'       => substr((string) $record['hash'], 0, 8) . '...',
+        ]);
+    }
+
+    /**
+     * 生成单条访问 key 的原文分享链接；历史摘要记录无法逆向恢复原文。
+     */
+    public function shareKey(string $id, AccessKeyService $keys): mixed
+    {
+        $plainKey = $keys->plainKeyForShare($id);
+        if ($plainKey === null) {
+            return json_fail('该访问 key 仅保存了摘要，无法恢复原文；请使用原 key 重新创建后再分享');
+        }
+        if ($keys->findValidById($id) === null) {
+            return json_fail('访问 key 已停用或已过期，无法生成分享链接');
+        }
+
+        $keyParameter = trim((string) config('cyber_cloak.key_parameter', 'key'));
+        if ($keyParameter === '') {
+            return json_fail('访问 key 参数名不能为空');
+        }
+
+        $baseUrl = trim((string) config('app.url', '')) ?: url('/');
+        $url     = rtrim($baseUrl, '/') . '/?' . http_build_query([
+            $keyParameter => $plainKey,
+        ], '', '&', PHP_QUERY_RFC3986);
+
+        return json_success('访问链接已生成', ['url' => $url]);
     }
 
     /**
@@ -322,84 +501,69 @@ class AdminCyberCloakController extends Controller
     }
 
     /**
-     * 测试供应商返回值并输出标准化统计，不写本地缓存。
-     */
-    public function testProvider(Request $request, IpProviderSyncService $sync): array
-    {
-        return $sync->test($this->providerOverrides($request));
-    }
-
-    /**
-     * 从后台触发一次供应商同步，支持试运行模式。
-     */
-    public function syncProvider(Request $request, IpProviderSyncService $sync): array
-    {
-        return $sync->sync((bool) $request->boolean('dry_run'), $this->providerOverrides($request));
-    }
-
-    /**
-     * 返回供应商配置摘要和最近同步日志，Token 永不出现在响应中。
-     */
-    public function providerStatus(IpProviderSyncService $sync): array
-    {
-        $configuration = $sync->configuration();
-        unset($configuration['token']);
-
-        $logs = [];
-        if (Schema::hasTable('cyber_cloak_ip_provider_sync_logs')) {
-            $logs = DB::table('cyber_cloak_ip_provider_sync_logs')
-                ->orderByDesc('id')
-                ->limit(20)
-                ->get(['provider_code', 'status', 'fetched_count', 'accepted_count', 'error', 'started_at', 'finished_at'])
-                ->all();
-        }
-
-        return [
-            'configuration' => $configuration,
-            'unavailable'   => $sync->isUnavailable(),
-            'logs'          => $logs,
-        ];
-    }
-
-    /**
-     * 更新展示订单审核状态；approved 表示允许进入正常履约处理。
-     */
-    public function reviewOrder(Request $request, Order $order): mixed
-    {
-        if (! Schema::hasColumn('orders', 'catalog_review_status')) {
-            return json_fail('请先执行阶段六数据库迁移');
-        }
-
-        $data = $request->validate([
-            'status' => 'required|in:pending,approved,rejected',
-            'note'   => 'nullable|string|max:2000',
-        ]);
-        $order->catalog_review_status = $data['status'];
-        $order->catalog_reviewed_by   = auth()->id();
-        $order->catalog_reviewed_at   = now();
-        $order->catalog_review_note   = $data['note'] ?? null;
-        $order->saveOrFail();
-
-        return json_success('展示订单审核状态已更新');
-    }
-
-    /**
-     * 仅保留允许后台临时覆盖的供应商参数。
+     * 读取插件启用状态；插件尚未安装或设置表暂不可用时返回可读的未知状态。
      *
-     * @return array<string,mixed>
+     * @return array{installed:bool,enabled:bool,label:string}
      */
-    private function providerOverrides(Request $request): array
+    private function pluginStatus(): array
     {
-        $overrides = [];
-        foreach (['provider', 'endpoint'] as $key) {
-            if ($request->filled($key)) {
-                $overrides[$key] = (string) $request->input($key);
+        try {
+            $plugin = app('plugin')->getPlugin('cyber_cloak');
+            if (! $plugin || ! $plugin->getInstalled()) {
+                return ['installed' => false, 'enabled' => false, 'label' => '未安装'];
             }
+
+            $enabled = $plugin->getEnabled();
+
+            return ['installed' => true, 'enabled' => $enabled, 'label' => $enabled ? '已启用' : '已停用'];
+        } catch (\Throwable) {
+            return ['installed' => false, 'enabled' => false, 'label' => '状态读取失败'];
         }
-        if ($request->filled('timeout')) {
-            $overrides['timeout'] = (int) $request->input('timeout');
+    }
+
+    /**
+     * 实际打开 PDO 连接探测真实库或展示库，不返回主机、账号和密码等部署敏感配置。
+     *
+     * @return array{connection:string,database:?string,connected:bool,label:string}
+     */
+    private function connectionStatus(string $mode): array
+    {
+        $connection = (string) config("cyber_cloak.connections.{$mode}", $mode === 'public' ? 'catalog_public' : 'mysql');
+        if (! is_array(config("database.connections.{$connection}"))) {
+            return ['connection' => $connection, 'database' => null, 'connected' => false, 'label' => '未配置'];
         }
 
-        return $overrides;
+        try {
+            $database = (string) DB::connection($connection)->getDatabaseName();
+            DB::connection($connection)->getPdo();
+
+            return [
+                'connection' => $connection,
+                'database'   => $database !== '' ? $database : null,
+                'connected'  => true,
+                'label'      => $database !== '' ? "已连接（{$database}）" : '已连接',
+            ];
+        } catch (\Throwable) {
+            return ['connection' => $connection, 'database' => null, 'connected' => false, 'label' => '连接失败'];
+        }
+    }
+
+    /**
+     * 过滤多选控件的空占位值，兼容历史文本、数组和重复选项。
+     *
+     * @return array<int,string>
+     */
+    private function normalizeMultiValue(mixed $value): array
+    {
+        if (! is_array($value)) {
+            $value = $value === null ? [] : [$value];
+        }
+
+        $values = array_map(
+            static fn (mixed $item): string => strtoupper(trim((string) $item)),
+            $value
+        );
+
+        return array_values(array_unique(array_filter($values, static fn (string $item): bool => $item !== '')));
     }
 }

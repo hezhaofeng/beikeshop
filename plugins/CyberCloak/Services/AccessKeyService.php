@@ -69,7 +69,7 @@ class AccessKeyService
     }
 
     /**
-     * 创建只保存 SHA-256 摘要的 key 记录。
+     * 创建同时保存原文与 SHA-256 摘要的 key 记录，原文用于后台生成分享链接。
      */
     public function create(string $plainKey, DateTimeInterface $expiresAt = null): array
     {
@@ -80,6 +80,7 @@ class AccessKeyService
 
         $record = [
             'id'         => (string) Str::uuid(),
+            'key'        => $plainKey,
             'hash'       => hash('sha256', $plainKey),
             'status'     => 'enabled',
             'expires_at' => $expiresAt?->format(DateTimeInterface::ATOM),
@@ -121,6 +122,24 @@ class AccessKeyService
         $this->save($filtered);
 
         return true;
+    }
+
+    /**
+     * 获取用于后台分享的原始 key；仅保存摘要的历史记录无法恢复。
+     */
+    public function plainKeyForShare(string $id): ?string
+    {
+        foreach ($this->all() as $record) {
+            if ($record['id'] !== $id) {
+                continue;
+            }
+
+            $plainKey = trim((string) ($record['key'] ?? ''));
+
+            return $plainKey !== '' ? $plainKey : null;
+        }
+
+        return null;
     }
 
     /**

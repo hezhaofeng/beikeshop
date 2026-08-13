@@ -5,7 +5,7 @@ namespace Beike\Shop\Http\Controllers;
 use Beike\Repositories\BrandRepo;
 use Beike\Shop\Http\Resources\ProductSimple;
 use Illuminate\Http\Request;
-use Plugin\CyberCloak\Services\CatalogCartItemService;
+use Plugin\CyberCloak\Services\SkuMappingService;
 
 class BrandController extends Controller
 {
@@ -28,18 +28,18 @@ class BrandController extends Controller
             return redirect(shop_route('brands.index'));
         }
 
+        $context = app(\Plugin\CyberCloak\Services\StoreContext::class);
+        $with    = ['masterSku', 'description'];
+        if (! ($context->isActive() && $context->isPublic())) {
+            $with[] = 'inCurrentWishlist';
+        }
         $products = $brand->products()
             ->where('active', 1)
-            ->with([
-                'masterSku',
-                'description',
-                'inCurrentWishlist',
-            ]);
-        $catalog = app(CatalogCartItemService::class);
-        if ($catalog->currentMode() === 'public') {
-            $skuIds = $catalog->sellablePublicSkuIds();
-            $products->whereHas('skus', fn ($query) => $query->whereIn('product_skus.id', $skuIds));
-            $products->with(['masterSku' => fn ($query) => $query->whereIn('product_skus.id', $skuIds)]);
+            ->with($with);
+        if ($context->isActive() && $context->isPublic()) {
+            $mappings = app(SkuMappingService::class);
+            $products->whereHas('skus', fn ($query) => $mappings->constrainToPublishedPublicSkus($query));
+            $products->with(['masterSku' => fn ($query) => $mappings->constrainToPublishedPublicSkus($query)]);
         }
         $products = $products->paginate(perPage());
 

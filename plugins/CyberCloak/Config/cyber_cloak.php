@@ -46,25 +46,14 @@ return [
     'trusted_proxy_ips'  => env('CYBER_CLOAK_TRUSTED_PROXY_IPS', ''),
     'cloudflare_enabled' => filter_var(env('CYBER_CLOAK_CLOUDFLARE_ENABLED', true), FILTER_VALIDATE_BOOL),
 
-    // 供应商只在后台测试或定时命令中访问，前台永远读取本地缓存。
-    'ip_provider_enabled'     => filter_var(env('CYBER_CLOAK_IP_PROVIDER_ENABLED', false), FILTER_VALIDATE_BOOL),
-    'ip_provider'             => env('CYBER_CLOAK_IP_PROVIDER', 'http'),
-    'ip_provider_endpoint'    => env('CYBER_CLOAK_IP_PROVIDER_ENDPOINT', ''),
-    'ip_provider_token'       => env('CYBER_CLOAK_IP_PROVIDER_TOKEN', ''),
-    'ip_provider_timeout'     => (int) env('CYBER_CLOAK_IP_PROVIDER_TIMEOUT', 5),
-    'ip_provider_cache_ttl'   => (int) env('CYBER_CLOAK_IP_PROVIDER_CACHE_TTL', 60),
-    'ip_provider_fail_mode'   => env('CYBER_CLOAK_IP_PROVIDER_FAIL_MODE', 'public'),
-    'ip_provider_allow_empty' => filter_var(env('CYBER_CLOAK_IP_PROVIDER_ALLOW_EMPTY', false), FILTER_VALIDATE_BOOL),
-    'ip_provider_schedule'    => env('CYBER_CLOAK_IP_PROVIDER_SCHEDULE', 'hourly'),
-
-    // 四层流量漏斗配置；GeoLite/GeoIP 数据库路径只在服务端读取，前台不会请求远程 API。
+    // 四层流量漏斗配置；GeoIP 和云 IP 汇总文件只在服务端读取，前台不会请求远程 API。
     'geoip_enabled'                => filter_var(env('CYBER_CLOAK_GEOIP_ENABLED', true), FILTER_VALIDATE_BOOL),
     'geoip_country_database'       => env('CYBER_CLOAK_GEOIP_COUNTRY_DATABASE', ''),
     'geoip_asn_database'           => env('CYBER_CLOAK_GEOIP_ASN_DATABASE', ''),
     'geoip_anonymous_database'     => env('CYBER_CLOAK_GEOIP_ANONYMOUS_DATABASE', ''),
+    'cloud_ip_ranges_database'     => env('CYBER_CLOAK_CLOUD_IP_RANGES_DATABASE', ''),
     'traffic_funnel_enabled'       => filter_var(env('CYBER_CLOAK_TRAFFIC_FUNNEL_ENABLED', true), FILTER_VALIDATE_BOOL),
     'traffic_allowed_countries'    => env('CYBER_CLOAK_TRAFFIC_ALLOWED_COUNTRIES', ''),
-    'traffic_blocked_countries'    => env('CYBER_CLOAK_TRAFFIC_BLOCKED_COUNTRIES', ''),
     'traffic_allowed_languages'    => env('CYBER_CLOAK_TRAFFIC_ALLOWED_LANGUAGES', ''),
     'traffic_user_agent_blacklist' => env('CYBER_CLOAK_TRAFFIC_USER_AGENT_BLACKLIST', $defaultTrafficUserAgentBlacklist),
     'traffic_blocked_asns'         => env('CYBER_CLOAK_TRAFFIC_BLOCKED_ASNS', ''),
@@ -75,6 +64,14 @@ return [
     'traffic_block_threshold'      => (int) env('CYBER_CLOAK_TRAFFIC_BLOCK_THRESHOLD', 80),
     'traffic_challenge_threshold'  => (int) env('CYBER_CLOAK_TRAFFIC_CHALLENGE_THRESHOLD', 50),
     'traffic_fingerprint_cookie'   => env('CYBER_CLOAK_TRAFFIC_FINGERPRINT_COOKIE', ''),
+    'traffic_behavior_enabled'            => filter_var(env('CYBER_CLOAK_TRAFFIC_BEHAVIOR_ENABLED', true), FILTER_VALIDATE_BOOL),
+    'traffic_behavior_window'             => (int) env('CYBER_CLOAK_TRAFFIC_BEHAVIOR_WINDOW', 60),
+    'traffic_behavior_max_requests'       => (int) env('CYBER_CLOAK_TRAFFIC_BEHAVIOR_MAX_REQUESTS', 60),
+    'traffic_behavior_max_routes'         => (int) env('CYBER_CLOAK_TRAFFIC_BEHAVIOR_MAX_ROUTES', 12),
+    'traffic_behavior_invalid_cookie_max' => (int) env('CYBER_CLOAK_TRAFFIC_BEHAVIOR_INVALID_COOKIE_MAX', 3),
+    'traffic_behavior_score'              => (int) env('CYBER_CLOAK_TRAFFIC_BEHAVIOR_SCORE', 20),
+    'traffic_risk_audit_enabled'          => filter_var(env('CYBER_CLOAK_TRAFFIC_RISK_AUDIT_ENABLED', true), FILTER_VALIDATE_BOOL),
+    'traffic_risk_audit_threshold'        => (int) env('CYBER_CLOAK_TRAFFIC_RISK_AUDIT_THRESHOLD', 20),
 
     // 阶段一不修改默认连接，后续商品仓储通过此映射显式选择连接。
     'connections' => [

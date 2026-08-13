@@ -9,7 +9,7 @@
         "en": "Select the real or public catalog from the access key, cookie, and IP rules."
     },
     "type": "feature",
-    "version": "v1.2.0",
+    "version": "v1.3.1",
     "author": {
         "name": "BeikeShop"
     }

@@ -24,7 +24,7 @@ php artisan beikeshop:install --force
 ./install.sh
 
 # Docker deployment
-docker compose --profile nginx up -d --build
+docker compose up -d --build
 docker compose exec nginx php artisan beikeshop:install --force
 ```
 

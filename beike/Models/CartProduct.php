@@ -19,15 +19,7 @@ class CartProduct extends Base
 {
     use HasFactory;
 
-    protected $fillable = [
-        'customer_id', 'session_id', 'selected', 'product_id', 'product_sku', 'quantity',
-        'catalog_mode', 'catalog_product_id', 'catalog_sku_id', 'fulfillment_sku',
-    ];
-
-    protected $casts = [
-        'catalog_product_id' => 'integer',
-        'catalog_sku_id'     => 'integer',
-    ];
+    protected $fillable = ['customer_id', 'session_id', 'selected', 'product_id', 'product_sku', 'quantity'];
 
     public function sku(): BelongsTo
     {

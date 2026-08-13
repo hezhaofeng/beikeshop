@@ -15,13 +15,17 @@ class MaxMindIpIntelligence
 
     private int $settingsLoadedAt = 0;
 
+    public function __construct(private readonly ?CloudIpRangeIntelligence $cloudRanges = null)
+    {
+    }
+
     /**
      * 使用本地 MaxMind MMDB 查询国家、ASN 和组织信息。
      *
      * GeoLite 数据库只负责地理和 ASN 信号，信誉及代理判断由其他信号提供。
      * 数据库不存在或记录缺失时返回 unknown，避免一次 GeoIP 故障阻断前台请求。
      *
-     * @return array{country:?string,asn:?int,organization:?string,anonymous:?bool,available:bool,source:string}
+     * @return array{country:?string,asn:?int,organization:?string,anonymous:?bool,cloud_provider:?string,network_type:string,cloud_range:?string,available:bool,source:string}
      */
     public function lookup(string $ip): array
     {
@@ -30,12 +34,23 @@ class MaxMindIpIntelligence
             'asn'          => null,
             'organization' => null,
             'anonymous'    => null,
+            'cloud_provider' => null,
+            'network_type' => 'UNKNOWN',
+            'cloud_range'  => null,
             'available'    => false,
             'source'       => 'none',
         ];
 
-        if (! filter_var($ip, FILTER_VALIDATE_IP) || ! $this->enabled()) {
+        if (! filter_var($ip, FILTER_VALIDATE_IP)) {
             return $result;
+        }
+
+        // 云 IP 汇总库独立于 MMDB 开关，管理员关闭 MaxMind 查询后仍可保留本地云网段识别。
+        $cloudPath = (string) $this->setting('cloud_ip_ranges_database', '');
+        $cloud     = ($this->cloudRanges ?: new CloudIpRangeIntelligence)->lookup($ip, $cloudPath);
+
+        if (! $this->enabled()) {
+            return $this->applyCloudResult($result, $cloud);
         }
 
         $countryPath = (string) $this->setting('geoip_country_database', '');
@@ -76,6 +91,34 @@ class MaxMindIpIntelligence
             } catch (\Throwable) {
                 // GeoLite 没有匿名代理数据时保持 unknown，不把 unknown 当作低风险。
             }
+        }
+
+        return $this->applyCloudResult($result, $cloud);
+    }
+
+    /**
+     * 合并独立云网段识别结果；该信号不依赖 MaxMind 数据库是否启用。
+     *
+     * @param array{country:?string,asn:?int,organization:?string,anonymous:?bool,cloud_provider:?string,network_type:string,cloud_range:?string,available:bool,source:string} $result
+     * @param array{provider:?string,cidr:?string,matched:bool,available:bool,source:string} $cloud
+     * @return array{country:?string,asn:?int,organization:?string,anonymous:?bool,cloud_provider:?string,network_type:string,cloud_range:?string,available:bool,source:string}
+     */
+    private function applyCloudResult(array $result, array $cloud): array
+    {
+        // 云 IP 汇总库是本地静态信号，只用于标记数据中心来源，不代表地址一定是恶意流量。
+        if ($cloud['available']) {
+            $result['available'] = true;
+            $result['source']    = $result['source'] === 'none'
+                ? $cloud['source']
+                : $result['source'] . '+' . $cloud['source'];
+        }
+        if ($cloud['matched']) {
+            $result['cloud_provider'] = $cloud['provider'];
+            $result['cloud_range']    = $cloud['cidr'];
+            $result['network_type']   = 'DATACENTER';
+        } elseif (($result['asn'] ?? null) !== null) {
+            // ASN 只能说明网络归属，不能据此断言是家庭宽带或代理。
+            $result['network_type'] = 'ISP_LIKELY';
         }
 
         return $result;
@@ -119,7 +162,7 @@ class MaxMindIpIntelligence
                 Setting::query()
                     ->where('type', 'plugin')
                     ->where('space', 'cyber_cloak')
-                    ->whereIn('name', ['geoip_enabled', 'geoip_country_database', 'geoip_asn_database', 'geoip_anonymous_database'])
+                    ->whereIn('name', ['geoip_enabled', 'geoip_country_database', 'geoip_asn_database', 'geoip_anonymous_database', 'cloud_ip_ranges_database'])
                     ->get()
                     ->each(function ($setting): void {
                         $this->settingCache[$setting->name] = $setting->json

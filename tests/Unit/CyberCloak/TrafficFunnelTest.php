@@ -9,6 +9,7 @@ use Plugin\CyberCloak\Services\ContextTicketService;
 use Plugin\CyberCloak\Services\IpAccessService;
 use Plugin\CyberCloak\Services\MaxMindIpIntelligence;
 use Plugin\CyberCloak\Services\TrafficFunnelService;
+use Plugin\CyberCloak\Services\TrafficRiskAuditService;
 use Tests\TestCase;
 
 class TrafficFunnelTest extends TestCase
@@ -28,12 +29,14 @@ class TrafficFunnelTest extends TestCase
             'traffic_rate_limit_max'       => 120,
             'traffic_rate_limit_decay'     => 60,
             'traffic_blocked_asns'         => '',
-            'traffic_blocked_countries'    => '',
+            'traffic_datacenter_asns'      => '',
             'traffic_datacenter_asns'      => '',
             'traffic_allowed_countries'    => '',
             'traffic_allowed_languages'    => '',
             'traffic_user_agent_blacklist' => '',
             'traffic_fingerprint_cookie'   => '',
+            'traffic_behavior_enabled'     => false,
+            'traffic_risk_audit_enabled'   => false,
         ] as $name => $value) {
             $this->setTrafficSetting($name, $value);
         }
@@ -130,6 +133,23 @@ class TrafficFunnelTest extends TestCase
     }
 
     /**
+     * 已配置允许国家时，未匹配和未知地区都直接进入展示漏斗。
+     */
+    public function test_non_allowed_country_is_forced_into_the_public_funnel(): void
+    {
+        $this->setTrafficSetting('traffic_allowed_countries', 'CN');
+        $request = Request::create('/products', 'GET', [], [], [], [
+            'REMOTE_ADDR'     => '203.0.113.10',
+            'HTTP_USER_AGENT' => 'Mozilla/5.0',
+        ]);
+
+        $result = (new TrafficFunnelService($this->intelligence(['country' => 'US'])))->evaluate($request, $this->ipResult());
+
+        $this->assertSame('challenge', $result['action']);
+        $this->assertContains('country_not_allowed', $result['reasons']);
+    }
+
+    /**
      * 默认 UA 黑名单应识别常见平台的专用爬虫，同时不误伤普通浏览器。
      */
     public function test_default_platform_crawler_user_agents_are_blacklisted(): void
@@ -223,6 +243,168 @@ class TrafficFunnelTest extends TestCase
     }
 
     /**
+     * 本地云网段命中时进入数据中心风险信号，不把单一云网段直接封禁。
+     */
+    public function test_cloud_range_is_datacenter_signal(): void
+    {
+        $intelligence = $this->intelligence([
+            'cloud_provider' => 'AWS',
+            'network_type'   => 'DATACENTER',
+            'cloud_range'    => '198.51.100.0/24',
+        ]);
+        $request = Request::create('/products', 'GET', [], [], [], ['REMOTE_ADDR' => '198.51.100.8']);
+
+        $result = (new TrafficFunnelService($intelligence))->evaluate($request, $this->ipResult());
+
+        $this->assertSame('observe', $result['action']);
+        $this->assertSame('AWS', $result['signals']['cloud_ip_range']['provider']);
+        $this->assertContains('cloud_ip_range', $result['reasons']);
+    }
+
+    /**
+     * 未知自动化流量可通过短窗口高频请求进入可解释的行为风险分支。
+     */
+    public function test_behavior_request_burst_generates_auditable_signal(): void
+    {
+        $this->setTrafficSetting('traffic_behavior_enabled', true);
+        $this->setTrafficSetting('traffic_behavior_window', 300);
+        $this->setTrafficSetting('traffic_behavior_max_requests', 1);
+        $this->setTrafficSetting('traffic_behavior_max_routes', 100);
+        $this->setTrafficSetting('traffic_behavior_invalid_cookie_max', 100);
+        $this->setTrafficSetting('traffic_behavior_score', 20);
+        $this->setTrafficSetting('traffic_challenge_threshold', 20);
+        $request = Request::create('/new-route', 'GET', [], [], [], [
+            'REMOTE_ADDR'     => '203.0.113.77',
+            'HTTP_USER_AGENT' => 'Mozilla/5.0',
+        ]);
+        $ipResult = array_merge($this->ipResult(), ['ip' => '203.0.113.77']);
+
+        $this->funnel()->evaluate($request, $ipResult);
+        $result = $this->funnel()->evaluate($request, $ipResult);
+
+        $this->assertSame('challenge', $result['action']);
+        $this->assertContains('behavior_request_burst', $result['reasons']);
+        $this->assertSame(2, $result['signals']['behavior_request_burst']['requests']);
+    }
+
+    /**
+     * 匿名 IP、云网段和 ASN 作为网络上下文，只在行为异常后形成组合风险信号。
+     */
+    public function test_network_intelligence_enhances_existing_behavior_signal(): void
+    {
+        $this->setTrafficSetting('traffic_behavior_enabled', true);
+        $this->setTrafficSetting('traffic_behavior_window', 300);
+        $this->setTrafficSetting('traffic_behavior_max_requests', 1);
+        $this->setTrafficSetting('traffic_behavior_max_routes', 100);
+        $this->setTrafficSetting('traffic_behavior_invalid_cookie_max', 100);
+        $this->setTrafficSetting('traffic_behavior_score', 20);
+        $this->setTrafficSetting('traffic_challenge_threshold', 50);
+        $request = Request::create('/network-behavior', 'GET', [], [], [], [
+            'REMOTE_ADDR'     => '203.0.113.66',
+            'HTTP_USER_AGENT' => 'Mozilla/5.0',
+        ]);
+        $ipResult = array_merge($this->ipResult(), ['ip' => '203.0.113.66']);
+        $intelligence = $this->intelligence([
+            'asn'            => 64512,
+            'anonymous'      => true,
+            'cloud_provider' => 'AWS',
+            'network_type'   => 'DATACENTER',
+        ]);
+        $service = new TrafficFunnelService($intelligence);
+
+        $service->evaluate($request, $ipResult);
+        $result = $service->evaluate($request, $ipResult);
+
+        $this->assertContains('behavior_request_burst', $result['reasons']);
+        $this->assertContains('behavior_network_activity', $result['reasons']);
+        $this->assertSame(64512, $result['signals']['behavior_network_activity']['network_context']['asn']);
+        $this->assertTrue($result['signals']['behavior_network_activity']['network_context']['anonymous_ip']);
+        $this->assertSame('AWS', $result['signals']['behavior_network_activity']['network_context']['datacenter']['provider']);
+    }
+
+    /**
+     * 人工可信状态只忽略行为计分，仍保留其他规则和深度识别能力。
+     */
+    public function test_trusted_risk_profile_skips_behavior_signals_only(): void
+    {
+        $this->setTrafficSetting('traffic_behavior_enabled', true);
+        $this->setTrafficSetting('traffic_behavior_max_requests', 1);
+        $this->setTrafficSetting('traffic_behavior_score', 40);
+        $ipResult = array_merge($this->ipResult(), ['ip' => '203.0.113.88']);
+        $request = Request::create('/trusted-check', 'GET', [], [], [], [
+            'REMOTE_ADDR'     => '203.0.113.88',
+            'HTTP_USER_AGENT' => 'Mozilla/5.0',
+        ]);
+        $audit = new class extends TrafficRiskAuditService
+        {
+            public function profileStatus(string $ip): string
+            {
+                return 'trusted';
+            }
+
+            public function record(Request $request, array $result, bool $enabled, int $threshold): void
+            {
+            }
+        };
+        $funnel = new TrafficFunnelService($this->intelligence(), null, $audit);
+
+        $funnel->evaluate($request, $ipResult);
+        $result = $funnel->evaluate($request, $ipResult);
+
+        $this->assertSame('allow', $result['action']);
+        $this->assertSame('trusted', $result['signals']['manual_risk_status']);
+        $this->assertNotContains('behavior_request_burst', $result['reasons']);
+    }
+
+    /**
+     * 人工封禁档案在无凭据漏斗中优先转为封禁动作。
+     */
+    public function test_blocked_risk_profile_is_a_high_priority_signal(): void
+    {
+        $audit = new class extends TrafficRiskAuditService
+        {
+            public function profileStatus(string $ip): string
+            {
+                return 'blocked';
+            }
+
+            public function record(Request $request, array $result, bool $enabled, int $threshold): void
+            {
+            }
+        };
+        $request = Request::create('/products', 'GET', [], [], [], ['REMOTE_ADDR' => '203.0.113.10']);
+
+        $result = (new TrafficFunnelService($this->intelligence(), null, $audit))->evaluate($request, $this->ipResult());
+
+        $this->assertSame('block', $result['action']);
+        $this->assertContains('manual_risk_block', $result['reasons']);
+    }
+
+    /**
+     * 人工可疑结论作为软风险信号参与阈值计算，不直接替代静态黑名单。
+     */
+    public function test_suspicious_risk_profile_adds_a_soft_signal(): void
+    {
+        $audit = new class extends TrafficRiskAuditService
+        {
+            public function profileStatus(string $ip): string
+            {
+                return 'suspicious';
+            }
+
+            public function record(Request $request, array $result, bool $enabled, int $threshold): void
+            {
+            }
+        };
+        $request = Request::create('/products', 'GET', [], [], [], ['REMOTE_ADDR' => '203.0.113.10']);
+
+        $result = (new TrafficFunnelService($this->intelligence(), null, $audit))->evaluate($request, $this->ipResult());
+
+        $this->assertSame('observe', $result['action']);
+        $this->assertContains('manual_risk_suspicious', $result['reasons']);
+    }
+
+    /**
      * 有效真实站 key 在国家、语言和 UA 等漏斗信号之前解析。
      */
     public function test_valid_key_bypasses_funnel_and_enters_real_mode(): void
@@ -285,9 +467,9 @@ class TrafficFunnelTest extends TestCase
     }
 
     /**
-     * 构造稳定的 IP 判断结果，避免测试依赖数据库或供应商缓存。
+     * 构造稳定的 IP 判断结果，避免测试依赖数据库或外部服务。
      *
-     * @return array{ip:string,allowed:bool,blacklisted:bool,whitelisted:bool,reputation:bool,provider_unavailable:bool}
+     * @return array{ip:string,allowed:bool,blacklisted:bool,whitelisted:bool,reputation:bool}
      */
     private function ipResult(): array
     {
@@ -296,8 +478,7 @@ class TrafficFunnelTest extends TestCase
             'allowed'              => true,
             'blacklisted'          => false,
             'whitelisted'          => false,
-            'reputation'           => false,
-            'provider_unavailable' => false,
+            'reputation' => false,
         ];
     }
 
@@ -328,6 +509,9 @@ class TrafficFunnelTest extends TestCase
             'asn'          => null,
             'organization' => null,
             'anonymous'    => null,
+            'cloud_provider' => null,
+            'network_type' => 'UNKNOWN',
+            'cloud_range'  => null,
             'available'    => false,
             'source'       => 'fixture',
         ], $override);

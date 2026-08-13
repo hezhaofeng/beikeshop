@@ -142,12 +142,12 @@ php artisan migrate
   ./install.sh
   ```
 
-  也可以使用仓库内置的 Docker Compose profile 手动启动：
+  也可以手动启动仓库内置的 Nginx Docker Compose 服务：
 
   ```
   cp .env.example .env
   printf "\nAPP_CODE_PATH=.\nDB_HOST=mysql\n" >> .env
-  docker compose --profile nginx up -d --build
+  docker compose up -d --build
   docker compose exec nginx composer install
   docker compose exec nginx php artisan beikeshop:install --force
   ```

@@ -16,28 +16,21 @@ services:
       - mysql
     networks:
       - beikeshop-network
-    profiles:
-      - nginx
 
-  # Apache + mod_php (可选 Web 服务器)
-  apache:
+  # CyberCloak 全量商品映射使用独立队列，避免后台 HTTP 请求被 Cloudflare 等代理超时中断。
+  queue:
     build:
-      context: ./docker/apache
+      context: ./docker/nginx
       dockerfile: Dockerfile
-    container_name: ${PROJECT_NAME:-beikeshop}-apache
+    container_name: ${PROJECT_NAME:-beikeshop}-queue
     restart: unless-stopped
-    ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+    command: php artisan queue:work cyber_cloak --queue=cyber_cloak --timeout=3600 --tries=1 --sleep=3
     volumes:
       - ${APP_CODE_PATH:-./beikeshop}:/var/www/html
-      - ./docker/apache/beikeshop.conf:/etc/apache2/sites-available/000-default.conf
     depends_on:
       - mysql
     networks:
       - beikeshop-network
-    profiles:
-      - apache
 
   # MySQL 数据库
   mysql:

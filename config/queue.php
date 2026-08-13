@@ -42,6 +42,15 @@ return [
             'after_commit' => false,
         ],
 
+        // CyberCloak 全量商品映射可能运行数分钟，必须避免默认 90 秒重试窗口导致重复消费。
+        'cyber_cloak' => [
+            'driver'       => 'database',
+            'table'        => 'jobs',
+            'queue'        => 'cyber_cloak',
+            'retry_after'  => (int) env('CYBER_CLOAK_QUEUE_RETRY_AFTER', 7200),
+            'after_commit' => false,
+        ],
+
         'beanstalkd' => [
             'driver'       => 'beanstalkd',
             'host'         => 'localhost',

@@ -39,9 +39,7 @@ class CatalogResolver
             return $this->publicResolution(
                 $ipResult,
                 is_string($cookieValue),
-                $ipResult['provider_unavailable']
-                    ? 'ip_provider_unavailable'
-                    : ($ipResult['blacklisted'] ? 'ip_blacklist' : 'ip_not_whitelisted')
+                $ipResult['blacklisted'] ? 'ip_blacklist' : 'ip_not_whitelisted'
             );
         }
 
@@ -50,6 +48,11 @@ class CatalogResolver
 
         if ($queryKey !== '') {
             $record = $this->accessKeys->findValid($queryKey);
+            if (! $record) {
+                // 分享链接使用签名票据，避免从已保存的摘要反推或暴露原始 key。
+                $ticket = $this->tickets->verify($queryKey);
+                $record = $ticket['record'] ?? null;
+            }
             if ($record) {
                 // 有效 key 是真实站显式入口，优先于漏斗国家、语言和 UA 信号。
                 return $this->realResolution($record, $ipResult['ip'], true, 'query_key');

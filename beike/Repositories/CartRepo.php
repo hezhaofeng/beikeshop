@@ -17,7 +17,6 @@ use Beike\Models\CartProduct;
 use Beike\Models\Customer;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
-use Plugin\CyberCloak\Services\CatalogCartItemService;
 
 class CartRepo
 {
@@ -97,7 +96,7 @@ class CartRepo
     {
         $cartList           = self::selectedCartProducts($customerId);
         foreach ($cartList as $item) {
-            if ($item->product && $item->product->shipping) {
+            if ($item->product->shipping) {
                 return true;
             }
         }
@@ -114,8 +113,6 @@ class CartRepo
     public static function selectedCartProducts($customerId)
     {
         $cartProducts = self::selectedCartProductsBuilder($customerId)->get();
-        $cartProducts = self::hydrateCatalogItems($cartProducts);
-
         $cartProducts = hook_filter('cart.repo.selected.products', $cartProducts);
 
         return $cartProducts;
@@ -151,8 +148,8 @@ class CartRepo
      */
     public static function allCartProductsBuilder($customerId): Builder
     {
-        // 商品关系由 CatalogCartItemService 按每条明细的 catalog_mode 显式加载。
-        $builder = CartProduct::query();
+        $builder =  CartProduct::query()
+            ->with(['product.description', 'sku.product.description']);
         if ($customerId) {
             $builder->where('customer_id', $customerId);
         } else {
@@ -169,30 +166,12 @@ class CartRepo
      */
     public static function mergeGuestCart($customer, $guestCartProduct): void
     {
+        $guestCartProductSkus   = $guestCartProduct->pluck('product_sku');
+        self::allCartProductsBuilder($customer->id)->whereIn('product_sku', $guestCartProductSkus)->delete();
+
         foreach ($guestCartProduct as $cartProduct) {
-            $mode      = $cartProduct->catalog_mode ?: 'real';
-            $productId = $cartProduct->catalog_product_id ?: $cartProduct->product_id;
-            $builder   = self::allCartProductsBuilder($customer->id)
-                ->where('catalog_mode', $mode)
-                ->where('catalog_product_id', $productId);
-            if ($cartProduct->catalog_sku_id) {
-                $builder->where('catalog_sku_id', $cartProduct->catalog_sku_id);
-            } else {
-                $builder->where('product_sku', $cartProduct->product_sku);
-            }
-            $builder->delete();
             $cartProduct->customer_id = $customer->id;
             $cartProduct->save();
         }
-    }
-
-    /**
-     * 让购物车仓储返回每条明细所属商品库的商品和 SKU。
-     */
-    private static function hydrateCatalogItems(Collection $cartProducts): Collection
-    {
-        $catalog = app(CatalogCartItemService::class);
-
-        return $cartProducts->filter(fn (CartProduct $cartProduct): bool => $catalog->hydrate($cartProduct))->values();
     }
 }

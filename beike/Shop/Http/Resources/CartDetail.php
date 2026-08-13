@@ -36,11 +36,6 @@ class CartDetail extends JsonResource
         $result = [
             'cart_id'         => $this->id,
             'product_id'      => $this->product_id,
-            'catalog_mode'    => $this->catalog_mode,
-            'catalog_product_id' => $this->catalog_product_id,
-            'catalog_sku_id'  => $this->catalog_sku_id,
-            'catalog_mapping_version' => $this->catalog_mapping_version,
-            'fulfillment_sku' => $this->fulfillment_sku,
             'sku_id'          => $sku->id,
             'sku'             => $this->product_sku,
             'product_sku'     => $skuCode,

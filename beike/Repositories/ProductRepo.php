@@ -21,13 +21,13 @@ use Beike\Models\ProductDescription;
 use Beike\Models\ProductRelation;
 use Beike\Models\ProductSku;
 use Beike\Shop\Http\Resources\ProductSimple;
-use Plugin\CyberCloak\Services\StoreContext;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\HigherOrderBuilderProxy;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Plugin\CyberCloak\Services\CatalogCartItemService;
+use Plugin\CyberCloak\Services\SkuMappingService;
+use Plugin\CyberCloak\Services\StoreContext;
 
 class ProductRepo
 {
@@ -53,10 +53,10 @@ class ProductRepo
             $relations[] = 'relations';
         } else {
             // 展示库只导入浏览数据，没有主库的商品关系和属性表。
-            $sellableSkuIds = self::sellableSkuIds();
-            // with() 约束接收 HasMany 关系对象，应避免声明为 Eloquent Builder。
-            $relations['skus'] = fn ($query) => $query->whereIn('product_skus.id', $sellableSkuIds);
-            $relations['masterSku'] = fn ($query) => $query->whereIn('product_skus.id', $sellableSkuIds);
+            $mappings = app(SkuMappingService::class);
+            // 映射索引位于展示库，避免把数万 SKU ID 读入 PHP 再拼接 WHERE IN。
+            $relations['skus']      = fn ($query) => $mappings->constrainToPublishedPublicSkus($query);
+            $relations['masterSku'] = fn ($query) => $mappings->constrainToPublishedPublicSkus($query);
             $product->setRelation('relations', new Collection);
             $product->setRelation('attributes', new Collection);
         }
@@ -82,8 +82,11 @@ class ProductRepo
     public static function getProductsByCategory($categoryId, $filterData)
     {
         $builder = static::getBuilder(array_merge(['category_id' => $categoryId, 'active' => 1], $filterData));
+        if (! self::isPublicCatalog()) {
+            $builder->with('inCurrentWishlist');
+        }
 
-        return $builder->with('inCurrentWishlist')
+        return $builder
             ->paginate($filterData['per_page'] ?? perPage())
             ->withQueryString();
     }
@@ -99,8 +102,11 @@ class ProductRepo
         if (! $productIds) {
             return ProductSimple::collection(new Collection);
         }
-        $builder  = static::getBuilder(['product_ids' => $productIds, 'active' => 1])->whereHas('masterSku');
-        $products = $builder->with('inCurrentWishlist')->get();
+        $builder = static::getBuilder(['product_ids' => $productIds, 'active' => 1])->whereHas('masterSku');
+        if (! self::isPublicCatalog()) {
+            $builder->with('inCurrentWishlist');
+        }
+        $products = $builder->get();
 
         return ProductSimple::collection($products);
     }
@@ -114,16 +120,16 @@ class ProductRepo
      */
     public static function getBuilder(array $filters = []): Builder
     {
-        $driver = getDBDriver();
+        $driver            = getDBDriver();
         $likeOperator      = self::getLikeOperator();
 
         $with = ['description', 'brand'];
-        $sellableSkuIds = self::sellableSkuIds();
         if (self::isPublicCatalog()) {
             // 展示商品只能暴露当前已发布版本中有 confirmed 映射的 SKU。
             // with() 约束接收 HasMany 关系对象，应避免声明为 Eloquent Builder。
-            $with['skus']     = fn ($query) => $query->whereIn('product_skus.id', $sellableSkuIds);
-            $with['masterSku'] = fn ($query) => $query->whereIn('product_skus.id', $sellableSkuIds);
+            $mappings           = app(SkuMappingService::class);
+            $with['skus']       = fn ($query) => $mappings->constrainToPublishedPublicSkus($query);
+            $with['masterSku']  = fn ($query) => $mappings->constrainToPublishedPublicSkus($query);
         } else {
             $with[] = 'skus';
             $with[] = 'masterSku';
@@ -134,7 +140,7 @@ class ProductRepo
         $builder = Product::query()->with($with);
 
         if (self::isPublicCatalog()) {
-            $builder->whereHas('skus', fn (Builder $query) => $query->whereIn('product_skus.id', $sellableSkuIds));
+            $builder->whereHas('skus', fn (Builder $query) => $mappings->constrainToPublishedPublicSkus($query));
         }
 
         $builder->leftJoin('product_descriptions as pd', function ($build) {
@@ -417,13 +423,13 @@ class ProductRepo
     public static function autocomplete($name, $limit = 50)
     {
         $likeOperator = self::getLikeOperator();
-        $products = Product::query()->with('description')->where('active', 1)
+        $products     = Product::query()->with('description')->where('active', 1)
             ->whereHas('description', function ($query) use ($name, $likeOperator) {
                 $query->where('name', $likeOperator, "%{$name}%");
             });
         if (self::isPublicCatalog()) {
-            $ids = self::sellableSkuIds();
-            $products->whereHas('skus', fn (Builder $query) => $query->whereIn('product_skus.id', $ids));
+            $mappings = app(SkuMappingService::class);
+            $products->whereHas('skus', fn (Builder $query) => $mappings->constrainToPublishedPublicSkus($query));
         }
         $products = $products->orderByDesc('created_at')->limit($limit)->get();
 
@@ -468,7 +474,7 @@ class ProductRepo
             return self::$allProductsWithName[$scope];
         }
 
-        $items     = [];
+        $items      = [];
         $productIds = static::getBuilder()->select('products.id')->pluck('id');
 
         if ($productIds->isNotEmpty()) {
@@ -517,7 +523,7 @@ class ProductRepo
         }
 
         $productIds = array_map('intval', $productIds);
-        $query = Product::query()
+        $query      = Product::query()
             ->with(['description'])
             ->whereIn('id', $productIds);
         $driver = $query->getModel()->getConnection()->getDriverName();
@@ -583,14 +589,6 @@ class ProductRepo
         $context = app(StoreContext::class);
 
         return $context->isActive() && $context->isPublic();
-    }
-
-    /**
-     * 返回当前已发布映射允许展示的 SKU ID。
-     */
-    private static function sellableSkuIds(): array
-    {
-        return app(CatalogCartItemService::class)->sellablePublicSkuIds();
     }
 
     /**

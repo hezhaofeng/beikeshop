@@ -12,8 +12,8 @@
 
 namespace Beike\Shop\Http\Requests;
 
+use Beike\Models\ProductSku;
 use Illuminate\Foundation\Http\FormRequest;
-use Plugin\CyberCloak\Services\CatalogCartItemService;
 
 class CartRequest extends FormRequest
 {
@@ -39,9 +39,8 @@ class CartRequest extends FormRequest
         return [
             'sku_id'   => 'required|int',
             'quantity' => ['required', 'int', 'min:1', function ($attribute, $value, $fail) use ($skuId) {
-                $catalog = app(CatalogCartItemService::class);
-                $sku     = $catalog->findSellableSkuById($catalog->currentMode(), $skuId);
-                if (! $sku || $value > $sku->quantity) {
+                $skuQuantity = ProductSku::query()->where('id', $skuId)->value('quantity');
+                if ($value > $skuQuantity) {
                     $fail(trans('cart.stock_out'));
                 }
             }],
