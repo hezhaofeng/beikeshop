@@ -1,0 +1,16 @@
+{
+    "code": "bestseller_selector",
+    "name": {
+        "zh_cn": "热卖商品批量选品",
+        "en": "Bestseller Product Selector"
+    },
+    "description": {
+        "zh_cn": "按分类筛选并批量维护首页热卖商品。",
+        "en": "Filter products by category and maintain the homepage bestseller list."
+    },
+    "type": "feature",
+    "version": "v1.0.0",
+    "author": {
+        "name": "BeikeShop"
+    }
+}
