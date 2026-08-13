@@ -45,7 +45,7 @@
 
   <div class="form-multi-select" data-input-name="{{ $selectName }}">
     {{-- 无选择时仍提交空数组，覆盖已经保存的旧列表。 --}}
-    <input type="hidden" name="{{ $selectName }}" value="">
+    <input type="hidden" class="form-multi-select-empty-input" name="{{ $selectName }}" value="" {{ $selectedValues !== [] ? 'disabled' : '' }}>
     <div class="form-multi-select-values" aria-live="polite">
       @foreach ($selectedValues as $selectedValue)
         <span class="form-multi-select-item" data-value="{{ $selectedValue }}">
@@ -118,6 +118,7 @@
               $item.append($remove);
               $picker.find('.form-multi-select-values').append($item);
               $picker.find('.form-multi-select-empty').addClass('d-none');
+              $picker.find('.form-multi-select-empty-input').prop('disabled', true);
             }
 
             $selectedOption.prop('disabled', true);
@@ -137,6 +138,7 @@
 
             if ($picker.find('.form-multi-select-item').length === 0) {
               $picker.find('.form-multi-select-empty').removeClass('d-none');
+              $picker.find('.form-multi-select-empty-input').prop('disabled', false);
             }
           });
         });
