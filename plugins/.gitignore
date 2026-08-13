@@ -10,5 +10,13 @@
 !GdMigrateImagePaths
 !ProductPositionSort
 !ProductPositionSort/**
+!BestsellerSelector
+!BestsellerSelector/**
 !CyberCloak
 !CyberCloak/**
+!CyberCloakSimple
+!CyberCloakSimple/**
+!Zelle
+!Zelle/**
+!TieredShipping
+!TieredShipping/**

@@ -1,0 +1,16 @@
+{
+    "code": "cyber_cloak_simple",
+    "name": {
+        "zh_cn": "CyberCloak Simple",
+        "en": "CyberCloak Simple"
+    },
+    "description": {
+        "zh_cn": "单数据库商品、分类和首页映射访问插件。",
+        "en": "Single-database product, category, and homepage mapping access plugin."
+    },
+    "type": "feature",
+    "version": "v1.1.0",
+    "author": {
+        "name": "BeikeShop"
+    }
+}
