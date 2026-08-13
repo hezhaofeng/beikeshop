@@ -55,28 +55,31 @@ class DesignService
         $productCodes           = ['product', 'category', 'latest'];
         $content['module_code'] = $moduleCode;
         if ($moduleCode == 'slideshow') {
-            return self::handleSlideShow($content);
+            $result = self::handleSlideShow($content);
         } elseif (in_array($moduleCode, ['img_text_slideshow', 'img_text_slideshow_2'])) {
-            return self::handleImgTextSlideShow($content);
+            $result = self::handleImgTextSlideShow($content);
         } elseif ($moduleCode == 'img_text_banner') {
-            return self::handleImgTextBanner($content);
+            $result = self::handleImgTextBanner($content);
         } elseif (in_array($moduleCode, ['image400', 'image401', 'image402', 'image403', 'image100', 'image200', 'image300', 'image301'])) {
-            return self::handleBanner($content);
+            $result = self::handleBanner($content);
         } elseif ($moduleCode == 'brand') {
-            return self::handleBrand($content);
+            $result = self::handleBrand($content);
         } elseif ($moduleCode == 'tab_product') {
-            return self::handleTabProducts($content);
+            $result = self::handleTabProducts($content);
         } elseif (in_array($moduleCode, $productCodes)) {
-            return self::handleProducts($content);
+            $result = self::handleProducts($content);
         } elseif (in_array($moduleCode, ['icons', 'img_text_banner_multiple'])) {
-            return self::handleIcons($content);
+            $result = self::handleIcons($content);
         } elseif ($moduleCode == 'rich_text') {
-            return self::handleRichText($content);
+            $result = self::handleRichText($content);
         } elseif ($moduleCode == 'page') {
-            return self::handlePage($content);
+            $result = self::handlePage($content);
+        } else {
+            $result = hook_filter('service.design.module.content', $content);
         }
 
-        return hook_filter('service.design.module.content', $content);
+        // 模块完成核心数据处理后再允许插件按 module_id 覆盖商品列表。
+        return hook_filter('service.design.module.content.after', $result);
     }
 
     /**
@@ -343,6 +346,7 @@ class DesignService
      */
     private static function handleLink($type, $value): string
     {
+        // 让访问模式插件在装修链接转换前替换商品/分类目标，未注册 Hook 时保持原行为。
         return type_route($type, $value);
     }
 
@@ -399,10 +403,11 @@ class DesignService
      */
     private static function mapProductIds(mixed $productIds): array
     {
-        if (! app()->bound(CatalogContentMappingService::class)) {
-            return self::sanitizeIds((array) $productIds);
-        }
+        $ids = app()->bound(CatalogContentMappingService::class)
+            ? app(CatalogContentMappingService::class)->mapProductIds($productIds)
+            : self::sanitizeIds((array) $productIds);
 
-        return app(CatalogContentMappingService::class)->mapProductIds($productIds);
+        // 单库轻量插件通过该扩展点转换首页商品，完整插件的映射结果仍保持优先。
+        return hook_filter('service.design.module.product_ids', $ids);
     }
 }

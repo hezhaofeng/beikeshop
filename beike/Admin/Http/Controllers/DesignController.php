@@ -71,7 +71,8 @@ class DesignController extends Controller
             'code'      => $moduleCode,
             'module_id' => $moduleId,
             'view_path' => $viewPath,
-            'content'   => DesignService::handleModuleContent($moduleCode, $content),
+            // 预览也携带装修实例 ID，确保预览结果与首页实际模块配置一致。
+            'content'   => DesignService::handleModuleContent($moduleCode, array_merge((array) $content, ['module_id' => $moduleId])),
             'design'    => (bool) $request->get('design'),
         ];
 

@@ -3,6 +3,18 @@
     <module-size v-model="form.module_size"></module-size>
 
     <div class="module-edit-group">
+      <div class="module-edit-title">{{ __('admin/builder.modules_quantity_line') }}</div>
+      <el-select v-model="form.desktop_columns" size="small" class="w-100">
+        <el-option
+          v-for="columns in desktopColumns"
+          :key="columns"
+          :label="columns"
+          :value="columns"
+        ></el-option>
+      </el-select>
+    </div>
+
+    <div class="module-edit-group">
       <div class="module-edit-title">{{ __('admin/builder.text_module_title') }}</div>
       <text-i18n v-model="form.title"></text-i18n>
     </div>
@@ -67,6 +79,7 @@ Vue.component('module-editor-product', {
       keyword: '',
       productData: [],
       loading: null,
+      desktopColumns: [2, 3, 4, 6],
       form: null
     }
   },
@@ -82,6 +95,9 @@ Vue.component('module-editor-product', {
 
   created: function () {
     this.form = JSON.parse(JSON.stringify(this.module));
+    if (!this.desktopColumns.includes(Number(this.form.desktop_columns))) {
+      this.$set(this.form, 'desktop_columns', 4);
+    }
     this.tabsValueProductData();
   },
 
@@ -141,6 +157,7 @@ Vue.component('module-editor-product', {
       },
       floor: languagesFill(''),
       module_size: 'container-fluid',// 窄屏、宽屏、全屏
+      desktop_columns: 4,
       products: [],
       title: languagesFill('{{ __('admin/builder.text_module_title') }}'),
     };
