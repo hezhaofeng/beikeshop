@@ -471,9 +471,8 @@ class AdminCyberCloakController extends Controller
         }
 
         $baseUrl = trim((string) config('app.url', '')) ?: url('/');
-        $url     = rtrim($baseUrl, '/') . '/?' . http_build_query([
-            $keyParameter => $plainKey,
-        ], '', '&', PHP_QUERY_RFC3986);
+        // 分享链接保留后台创建的 key 原文，便于与手工使用的 key 直接核对。
+        $url     = rtrim($baseUrl, '/') . '/?' . $keyParameter . '=' . $plainKey;
 
         return json_success('访问链接已生成', ['url' => $url]);
     }

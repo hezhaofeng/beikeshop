@@ -10,6 +10,7 @@
     },
     "type": "feature",
     "version": "v1.3.1",
+    "icon": "/image/logo.png",
     "author": {
         "name": "BeikeShop"
     }
