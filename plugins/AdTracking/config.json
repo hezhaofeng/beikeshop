@@ -1,0 +1,18 @@
+{
+    "code": "ad_tracking",
+    "name": {
+        "zh_cn": "平台广告追踪与转化事件",
+        "en": "Ads Tracking and Conversion Events"
+    },
+    "description": {
+        "zh_cn": "统一管理多平台 Pixel、服务端转化回传、UTM 归因和订单来源。",
+        "en": "Manage multi-platform pixels, server-side conversions, UTM attribution and order sources."
+    },
+    "type": "marketing",
+    "version": "v1.0.0",
+    "local_development": true,
+    "icon": "/image/logo.svg",
+    "author": {
+        "name": "BeikeShop"
+    }
+}
