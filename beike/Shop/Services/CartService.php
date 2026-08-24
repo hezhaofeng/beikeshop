@@ -69,7 +69,7 @@ class CartService
      * 创建购物车或者更新购物车数量
      * @throws Exception
      */
-    public static function add($sku, int $quantity, $customer = null)
+    public static function add($sku, int $quantity, $customer = null, string $lineKey = '')
     {
         $customerId = $customer->id ?? 0;
 
@@ -89,6 +89,7 @@ class CartService
         }
         $cart = $builder->where('product_id', $productId)
             ->where('product_sku', $skuCode)
+            ->where('line_key', $lineKey)
             ->first();
 
         if ($cart) {
@@ -107,6 +108,7 @@ class CartService
                 'product_id'     => $productId,
                 'product_sku'    => $skuCode,
                 'quantity'       => $quantity,
+                'line_key'       => $lineKey,
                 'selected'       => true,
             ]);
         }

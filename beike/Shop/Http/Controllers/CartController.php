@@ -91,15 +91,33 @@ class CartController extends Controller
                 ->whereRelation('product', 'active', '=', true)
                 ->findOrFail($skuId);
 
+            $cartContext = hook_filter('cart.store.context', [
+                'request'  => $request,
+                'sku'      => $sku,
+                'quantity' => (int) $quantity,
+                'buy_now'  => $buyNow,
+                'customer' => $customer,
+                'line_key' => '',
+            ]);
+            $lineKey = is_array($cartContext) ? (string) ($cartContext['line_key'] ?? '') : '';
+            if (strlen($lineKey) > 64) {
+                throw new \InvalidArgumentException('购物车行标识无效');
+            }
+
             if ($buyNow) {
-                $cart = CartService::add($sku, $quantity, $customer);
+                $cart = CartService::add($sku, $quantity, $customer, $lineKey);
                 if ($cart->quantity != $quantity) {
                     CartService::updateQuantity($customer, $cart->id, $quantity);
                 }
                 CartService::select($customer, [$cart->id], true);
             } else {
-                $cart = CartService::add($sku, $quantity, $customer);
+                $cart = CartService::add($sku, $quantity, $customer, $lineKey);
             }
+
+            hook_action('cart.store.after', [
+                'cart'    => $cart,
+                'context' => $cartContext,
+            ]);
 
             $cart = hook_filter('cart.store.data', $cart);
 

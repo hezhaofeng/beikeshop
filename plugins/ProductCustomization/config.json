@@ -1,0 +1,18 @@
+{
+    "code": "product_customization",
+    "name": {
+        "zh_cn": "商品定制",
+        "en": "Product Customization"
+    },
+    "description": {
+        "zh_cn": "为指定商品分类配置多个前台定制输入项，并将定制内容保存到购物车和订单。",
+        "en": "Configure multiple customer input fields for selected product categories and save them with carts and orders."
+    },
+    "type": "feature",
+    "version": "v1.0.0",
+    "local_development": true,
+    "icon": "/image/logo.png",
+    "author": {
+        "name": "BeikeShop"
+    }
+}
