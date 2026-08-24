@@ -10,6 +10,7 @@
     },
     "type": "feature",
     "version": "v1.0.0",
+    "local_development": true,
     "icon": "/image/logo.png",
     "author": {
         "name": "$VENDOR$",

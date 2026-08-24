@@ -145,7 +145,7 @@ class Manager
 
         $freePluginCodes = config('app.free_plugin_codes') ?? [];
 
-        if (! in_array($code, $freePluginCodes)) {
+        if (! $this->shouldSkipMarketplaceValidation($plugin, $code, $freePluginCodes)) {
             try {
                 $apiEndPoint = "/v1/plugins/{$code}";
                 $content     = Http::sendGet($apiEndPoint);
@@ -162,6 +162,23 @@ class Manager
         $plugin->handleLabel();
 
         return $plugin;
+    }
+
+    /**
+     * 判断当前插件是否应跳过插件市场查询。
+     *
+     * @param Plugin $plugin 插件实例
+     * @param string $code 插件编码
+     * @param array $freePluginCodes 系统内置免费插件编码
+     */
+    protected function shouldSkipMarketplaceValidation(
+        Plugin $plugin,
+        string $code,
+        array $freePluginCodes
+    ): bool {
+        // 本地自研插件不依赖插件市场，避免与市场同 code 时误触发授权校验。
+        return (bool) $plugin->packageInfoAttribute('local_development')
+            || in_array($code, $freePluginCodes, true);
     }
 
     /**
