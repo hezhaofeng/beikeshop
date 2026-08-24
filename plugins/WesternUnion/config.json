@@ -1,0 +1,19 @@
+{
+    "code": "western_union",
+    "name": {
+        "zh_cn": "Western Union",
+        "en": "Western Union"
+    },
+    "description": {
+        "zh_cn": "买家按 Western Union 转账说明付款并上传凭证，由后台核验到账后确认支付。",
+        "en": "Customers follow Western Union transfer instructions and upload a receipt. Administrators verify the payment before it is confirmed."
+    },
+    "type": "payment",
+    "version": "v1.0.0",
+    "local_development": true,
+    "icon": "/image/logo.png",
+    "author": {
+        "name": "BeikeShop",
+        "email": "service@beikeshop.com"
+    }
+}
