@@ -1,0 +1,17 @@
+{
+    "code": "insurance_fee",
+    "name": {
+        "zh_cn": "保险费",
+        "en": "Insurance Fee"
+    },
+    "description": {
+        "zh_cn": "按每件商品的固定 USD 金额收取保险费。",
+        "en": "Charge a fixed USD insurance fee per product item."
+    },
+    "type": "feature",
+    "version": "v1.0.0",
+    "local_development": true,
+    "author": {
+        "name": "BeikeShop"
+    }
+}
