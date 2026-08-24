@@ -1,0 +1,19 @@
+{
+    "code": "offline_transfer",
+    "name": {
+        "zh_cn": "线下转账",
+        "en": "Offline Transfer"
+    },
+    "description": {
+        "zh_cn": "买家按转账说明付款并上传凭证，由后台核验到账后确认支付。",
+        "en": "Customers follow transfer instructions and upload a receipt. Administrators verify the payment before it is confirmed."
+    },
+    "type": "payment",
+    "version": "v1.0.0",
+    "local_development": true,
+    "icon": "/image/logo.png",
+    "author": {
+        "name": "BeikeShop",
+        "email": "service@beikeshop.com"
+    }
+}
