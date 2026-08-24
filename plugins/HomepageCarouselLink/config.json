@@ -1,0 +1,17 @@
+{
+    "code": "homepage_carousel_link",
+    "name": {
+        "zh_cn": "首页轮播图整块跳转",
+        "en": "Homepage Carousel Full-Slide Link"
+    },
+    "description": {
+        "zh_cn": "让首页轮播图整张图片和文字区域支持分类或自定义链接，并支持当前窗口或新窗口打开。",
+        "en": "Make homepage carousel images and text areas clickable with category or custom links and configurable window targets."
+    },
+    "type": "feature",
+    "version": "v1.0.0",
+    "local_development": true,
+    "author": {
+        "name": "BeikeShop"
+    }
+}
