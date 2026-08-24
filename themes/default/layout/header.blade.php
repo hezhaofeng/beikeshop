@@ -66,9 +66,12 @@
       @hook('header.top.language.after')
 
       <div class="right nav">
-        @if (system_setting('base.telephone', ''))
+        @if (system_setting('base.email', ''))
           @hookwrapper('header.top.telephone')
-          <div class="my-auto"><i class="bi bi-telephone-forward me-2"></i> {{ system_setting('base.telephone') }}</div>
+          <div class="my-auto">
+            <i class="bi bi-envelope-fill me-2"></i>
+            <a class="text-reset text-decoration-none" href="mailto:{{ system_setting('base.email') }}">{{ system_setting('base.email') }}</a>
+          </div>
           @endhookwrapper
         @endif
 
