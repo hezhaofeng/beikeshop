@@ -17,6 +17,8 @@ class TieredShippingService
 
     public const MODE_QUANTITY_FREE = 'quantity_free';
 
+    public const MODE_QUANTITY_ADDITIONAL_FEE = 'quantity_additional_fee';
+
     /**
      * 按已选商品小计和总件数计算运费，不信任后台存量配置中的无效数据。
      */
@@ -42,6 +44,15 @@ class TieredShippingService
             return $this->calculateTieredFee($orderAmount, $setting, $standardFee);
         }
 
+        if ($mode === self::MODE_QUANTITY_ADDITIONAL_FEE) {
+            $freeThreshold = $this->normalizePositiveInteger(Arr::get($setting, 'quantity_free_threshold'));
+            if ($freeThreshold !== null && $productQuantity >= $freeThreshold) {
+                return 0.0;
+            }
+
+            return $this->calculateQuantityAdditionalFee($productQuantity, $setting, $standardFee);
+        }
+
         // 配置被手工篡改时回退基础运费，不让异常配置意外变为免运费。
         return $standardFee;
     }
@@ -56,15 +67,18 @@ class TieredShippingService
                 self::MODE_AMOUNT_FREE,
                 self::MODE_TIERED_AMOUNT,
                 self::MODE_QUANTITY_FREE,
+                self::MODE_QUANTITY_ADDITIONAL_FEE,
             ])],
             'standard_fee'               => ['required', 'numeric', 'min:0', 'max:99999999.99'],
             'amount_free_threshold'      => ['nullable', 'numeric', 'min:0', 'max:99999999.99'],
             'quantity_free_threshold'    => ['nullable', 'integer', 'min:1', 'max:1000000'],
+            'additional_item_fee'        => ['nullable', 'numeric', 'min:0', 'max:99999999.99'],
             'tiered_rules'               => ['nullable', 'array', 'max:100'],
         ], [], [
             'standard_fee'            => '基础运费',
             'amount_free_threshold'   => '金额免运费门槛',
             'quantity_free_threshold' => '件数免运费门槛',
+            'additional_item_fee'     => '每增加一件商品运费',
             'tiered_rules'            => '金额阶梯规则',
         ]);
 
@@ -75,8 +89,12 @@ class TieredShippingService
                 $validator->errors()->add('amount_free_threshold', '请填写金额免运费门槛。');
             }
 
-            if ($mode === self::MODE_QUANTITY_FREE && blank($fields['quantity_free_threshold'] ?? null)) {
+            if (in_array($mode, [self::MODE_QUANTITY_FREE, self::MODE_QUANTITY_ADDITIONAL_FEE], true) && blank($fields['quantity_free_threshold'] ?? null)) {
                 $validator->errors()->add('quantity_free_threshold', '请填写件数免运费门槛。');
+            }
+
+            if ($mode === self::MODE_QUANTITY_ADDITIONAL_FEE && blank($fields['additional_item_fee'] ?? null)) {
+                $validator->errors()->add('additional_item_fee', '请填写每增加一件商品运费。');
             }
 
             if ($mode !== self::MODE_TIERED_AMOUNT) {
@@ -128,6 +146,17 @@ class TieredShippingService
         }
 
         return $matchedFee ?? $standardFee;
+    }
+
+    /**
+     * 基础运费覆盖首件商品，后续每增加一件收取一次附加运费。
+     */
+    private function calculateQuantityAdditionalFee(int $productQuantity, array $setting, float $standardFee): float
+    {
+        $additionalItemFee = $this->normalizeMoney(Arr::get($setting, 'additional_item_fee', 0));
+        $additionalCount   = max(0, $productQuantity - 1);
+
+        return round($standardFee + ($additionalCount * $additionalItemFee), 2);
     }
 
     /**

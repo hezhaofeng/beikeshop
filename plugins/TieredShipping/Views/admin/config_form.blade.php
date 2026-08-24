@@ -35,7 +35,8 @@
         :options="[
           ['value' => 'amount_free', 'label' => '订单金额满额免运费'],
           ['value' => 'tiered_amount', 'label' => '按订单金额阶梯运费'],
-          ['value' => 'quantity_free', 'label' => '商品件数满额免运费'],
+          ['value' => 'quantity_free', 'label' => 'n件商品（包含n）以上免运费'],
+          ['value' => 'quantity_additional_fee', 'label' => '固定运费加商品件数运费'],
         ]"
         value="{{ $mode }}" />
 
@@ -67,13 +68,37 @@
       <div class="mode-panel" data-mode-panel="quantity_free" @if($mode !== 'quantity_free') hidden @endif>
         <x-admin-form-input
           name="quantity_free_threshold"
-          title="件数免运费门槛"
+          title="免运费商品件数（包含该件数）"
           type="number"
           step="1"
           groupRight="件"
           :error="$errors->first('quantity_free_threshold')"
           value="{{ old('quantity_free_threshold', $setting['quantity_free_threshold'] ?? '') }}">
-          <div class="help-text font-size-12 lh-base">订单商品总件数达到此数量后，运费为 0。</div>
+          <div class="help-text font-size-12 lh-base">订单商品总件数达到 n 件（包含 n 件）后，运费为 0。</div>
+        </x-admin-form-input>
+      </div>
+
+      <div class="mode-panel" data-mode-panel="quantity_additional_fee" @if($mode !== 'quantity_additional_fee') hidden @endif>
+        <x-admin-form-input
+          name="additional_item_fee"
+          title="每增加一件商品运费"
+          type="number"
+          step="0.01"
+          groupRight="{{ current_currency_code() }}"
+          :error="$errors->first('additional_item_fee')"
+          value="{{ old('additional_item_fee', $setting['additional_item_fee'] ?? '') }}">
+          <div class="help-text font-size-12 lh-base">基础运费包含首件商品；第二件起，每增加一件商品加收此费用。</div>
+        </x-admin-form-input>
+
+        <x-admin-form-input
+          name="quantity_free_threshold"
+          title="满 n 件免运费（包含 n 件）"
+          type="number"
+          step="1"
+          groupRight="件"
+          :error="$errors->first('quantity_free_threshold')"
+          value="{{ old('quantity_free_threshold', $setting['quantity_free_threshold'] ?? '') }}">
+          <div class="help-text font-size-12 lh-base">商品总件数达到该数量后，固定运费和件数附加运费均为 0。</div>
         </x-admin-form-input>
       </div>
 

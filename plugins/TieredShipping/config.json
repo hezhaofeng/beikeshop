@@ -5,11 +5,11 @@
         "en": "Tiered Shipping"
     },
     "description": {
-        "zh_cn": "按订单金额或商品件数设置免运费和阶梯运费。",
-        "en": "Free-shipping thresholds and tiered shipping fees by order amount or item quantity."
+        "zh_cn": "按订单金额或商品件数设置免运费、阶梯运费及件数附加运费。",
+        "en": "Free-shipping thresholds, tiered fees, and per-item additional shipping fees."
     },
     "type": "shipping",
-    "version": "v1.0.0",
+    "version": "v1.1.0",
     "icon": "/image/logo.png",
     "author": {
         "name": "BeikeShop"

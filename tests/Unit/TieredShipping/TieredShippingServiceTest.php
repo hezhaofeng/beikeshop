@@ -62,6 +62,69 @@ class TieredShippingServiceTest extends TestCase
     }
 
     /**
+     * 基础运费覆盖首件，后续商品按每件附加运费累计。
+     */
+    public function test_quantity_additional_fee_accumulates_after_the_first_item(): void
+    {
+        $service = new TieredShippingService;
+        $setting = [
+            'calculation_mode'    => TieredShippingService::MODE_QUANTITY_ADDITIONAL_FEE,
+            'standard_fee'        => '19.90',
+            'additional_item_fee' => '5.00',
+        ];
+
+        $this->assertSame(19.9, $service->calculate(10, 1, $setting));
+        $this->assertSame(24.9, $service->calculate(10, 2, $setting));
+        $this->assertSame(29.9, $service->calculate(10, 3, $setting));
+    }
+
+    /**
+     * 件数附加运费模式达到免运费件数（包含门槛件）时直接免运费。
+     */
+    public function test_quantity_additional_fee_becomes_free_at_quantity_threshold(): void
+    {
+        $service = new TieredShippingService;
+        $setting = [
+            'calculation_mode'        => TieredShippingService::MODE_QUANTITY_ADDITIONAL_FEE,
+            'standard_fee'            => 19.90,
+            'additional_item_fee'     => 5.00,
+            'quantity_free_threshold' => 3,
+        ];
+
+        $this->assertSame(24.9, $service->calculate(10, 2, $setting));
+        $this->assertSame(0.0, $service->calculate(10, 3, $setting));
+    }
+
+    /**
+     * 件数附加运费模式必须填写每件附加金额。
+     */
+    public function test_quantity_additional_fee_configuration_requires_an_additional_item_fee(): void
+    {
+        $validator = TieredShippingService::validateConfiguration([
+            'calculation_mode' => TieredShippingService::MODE_QUANTITY_ADDITIONAL_FEE,
+            'standard_fee'     => 19.9,
+        ]);
+
+        $this->assertTrue($validator->fails());
+        $this->assertArrayHasKey('additional_item_fee', $validator->errors()->toArray());
+    }
+
+    /**
+     * 件数附加运费模式必须填写免运费件数门槛。
+     */
+    public function test_quantity_additional_fee_configuration_requires_a_free_shipping_threshold(): void
+    {
+        $validator = TieredShippingService::validateConfiguration([
+            'calculation_mode'    => TieredShippingService::MODE_QUANTITY_ADDITIONAL_FEE,
+            'standard_fee'        => 19.9,
+            'additional_item_fee' => 5,
+        ]);
+
+        $this->assertTrue($validator->fails());
+        $this->assertArrayHasKey('quantity_free_threshold', $validator->errors()->toArray());
+    }
+
+    /**
      * 保存金额阶梯时必须至少有一条规则，且门槛不能重复。
      */
     public function test_tiered_configuration_requires_unique_rules(): void
