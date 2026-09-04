@@ -1,0 +1,17 @@
+{
+    "code": "custom_mail",
+    "name": {
+        "zh_cn": "自定义邮件",
+        "en": "Custom Mail"
+    },
+    "description": {
+        "zh_cn": "扩展商城邮件场景并使用可配置的 HTML 模板。",
+        "en": "Add mail scenarios and configure HTML templates without changing core files."
+    },
+    "type": "service",
+    "version": "v1.0.0",
+    "local_development": true,
+    "author": {
+        "name": "BeikeShop"
+    }
+}
