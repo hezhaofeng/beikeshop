@@ -35,6 +35,14 @@
       <div class="form-text">输入分类名称或完整路径快速筛选；一级和二级分类会包含其下所有子分类商品。</div>
     </div>
     <div class="col-lg-4">
+      <label class="form-label" for="bestseller-selector-product-name">商品名称</label>
+      <div class="input-group">
+        <input id="bestseller-selector-product-name" class="form-control" type="search" data-field="product-name" placeholder="输入商品名称" maxlength="255" autocomplete="off">
+        <button type="button" class="btn btn-outline-secondary" data-action="search-products">查询</button>
+      </div>
+      <div class="form-text">无需选择分类即可按名称搜索；选择分类后会组合筛选。输入后按回车或点击“查询”。</div>
+    </div>
+    <div class="col-lg-4">
       <label class="form-label" for="bestseller-selector-mode">首页数据来源</label>
       <select id="bestseller-selector-mode" class="form-select" data-field="mode">
         <option value="auto">自动：使用模块原配置</option>
@@ -54,7 +62,7 @@
       <div class="border rounded h-100">
         <div class="d-flex align-items-center justify-content-between gap-2 px-3 py-2 border-bottom bg-light">
           <strong class="small">分类商品</strong>
-          <span class="text-secondary small" data-field="product-summary">请选择分类</span>
+          <span class="text-secondary small" data-field="product-summary">请选择分类或输入商品名称</span>
         </div>
         <div class="table-responsive">
           <table class="table table-hover align-middle mb-0">
@@ -67,7 +75,7 @@
               </tr>
             </thead>
             <tbody data-field="product-items">
-              <tr><td colspan="4" class="text-center text-secondary py-4">请选择分类</td></tr>
+              <tr><td colspan="4" class="text-center text-secondary py-4">请选择分类或输入商品名称</td></tr>
             </tbody>
           </table>
         </div>
@@ -116,6 +124,7 @@
         activeModuleId: '',
         activeTabIndex: '',
         categoryId: '',
+        productName: '',
         page: 1,
         pagination: null,
         productItems: [],
@@ -302,7 +311,10 @@
         const body = panel.find('[data-field="product-items"]');
         body.empty();
         if (state.productItems.length === 0) {
-          body.append('<tr><td colspan="4" class="text-center text-secondary py-4">该分类暂无可选商品</td></tr>');
+          const emptyMessage = state.productName
+            ? '没有匹配名称的可选商品'
+            : (state.categoryId ? '该分类暂无可选商品' : '请输入商品名称或选择分类');
+          body.append('<tr><td colspan="4" class="text-center text-secondary py-4">' + emptyMessage + '</td></tr>');
           return;
         }
 
@@ -326,7 +338,8 @@
         const page = state.pagination;
         wrap.empty();
         if (!page) return;
-        panel.find('[data-field="product-summary"]').text('共 ' + page.total + ' 个，按创建时间从新到旧');
+        const nameSummary = state.productName ? '，名称含“' + state.productName + '”' : '';
+        panel.find('[data-field="product-summary"]').text('共 ' + page.total + ' 个' + nameSummary + '，按创建时间从新到旧');
         const previousDisabled = page.current_page <= 1 ? ' disabled' : '';
         const nextDisabled = page.current_page >= page.last_page ? ' disabled' : '';
         wrap.append('<span class="text-secondary small">第 ' + page.current_page + ' / ' + page.last_page + ' 页</span>');
@@ -350,10 +363,20 @@
       }
 
       function loadProducts(page) {
-        if (!state.categoryId) return;
         state.page = page || 1;
+        state.productName = String(panel.find('[data-field="product-name"]').val() || '').trim();
+        if (!state.categoryId && !state.productName) {
+          state.productItems = [];
+          state.pagination = null;
+          renderProducts();
+          renderPagination();
+          return;
+        }
         panel.find('[data-field="product-items"]').html('<tr><td colspan="4" class="text-center text-secondary py-4">正在读取商品...</td></tr>');
-        $http.get(endpoints.products, { category_id: state.categoryId, page: state.page, per_page: 50 }, { hload: true }).then(function (response) {
+        const filters = { page: state.page, per_page: 50 };
+        if (state.categoryId) filters.category_id = state.categoryId;
+        if (state.productName) filters.name = state.productName;
+        $http.get(endpoints.products, filters, { hload: true }).then(function (response) {
           const data = dataOf(response);
           state.productItems = data.items || [];
           state.pagination = data.pagination || null;
@@ -420,6 +443,16 @@
 
       panel.on('click', '[data-role="category-option"]', function () {
         chooseCategory($(this).data('id'));
+      });
+
+      panel.on('keydown', '[data-field="product-name"]', function (event) {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        loadProducts(1);
+      });
+
+      panel.on('click', '[data-action="search-products"]', function () {
+        loadProducts(1);
       });
 
       panel.on('change', '[data-field="module"]', function () {

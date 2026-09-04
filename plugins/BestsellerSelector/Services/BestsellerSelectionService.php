@@ -2,10 +2,10 @@
 
 namespace Plugin\BestsellerSelector\Services;
 
+use Beike\Models\CategoryPath;
 use Beike\Repositories\CategoryRepo;
 use Beike\Repositories\ProductRepo;
 use Beike\Repositories\SettingRepo;
-use Beike\Models\CategoryPath;
 use Beike\Shop\Http\Resources\ProductSimple;
 use Plugin\CyberCloak\Services\CatalogContentMappingService;
 
@@ -116,17 +116,25 @@ class BestsellerSelectionService
     }
 
     /**
-     * 按所选分类查询启用商品。父级分类显式展开为所有子孙分类，避免被店铺分类展示配置影响。
+     * 按可选的分类及商品名称查询启用商品。父级分类显式展开为所有子孙分类，避免被店铺分类展示配置影响。
      */
-    public function productsByCategory(int $categoryId, int $page = 1, int $perPage = 50): array
+    public function productsByCategory(?int $categoryId, int $page = 1, int $perPage = 50, string $name = ''): array
     {
         $perPage = min(max($perPage, 10), 100);
-        $builder = ProductRepo::getBuilder([
-            'category_id' => $this->categoryAndDescendantIds($categoryId),
+        $filters = [
             'active'      => 1,
             'sort'        => 'products.created_at',
             'order'       => 'desc',
-        ])->whereHas('masterSku');
+        ];
+        if ($categoryId) {
+            $filters['category_id'] = $this->categoryAndDescendantIds($categoryId);
+        }
+        $name = trim($name);
+        if ($name !== '') {
+            $filters['name'] = $name;
+        }
+
+        $builder = ProductRepo::getBuilder($filters)->whereHas('masterSku');
 
         $paginator = $builder->paginate($perPage, ['*'], 'page', max($page, 1));
         $items     = ProductSimple::collection($paginator->getCollection())->jsonSerialize();
@@ -217,14 +225,14 @@ class BestsellerSelectionService
                     }
                     $tabIds = $this->validSelectedIds((array) ($tabConfig['product_ids'] ?? []));
                     // 选项卡提交了商品但未带 mode 时，按手动选品处理，兼容旧版面板 payload。
-                    $tabMode = ($tabConfig['mode'] ?? ($tabIds !== [] ? self::MODE_MANUAL : $mode));
+                    $tabMode                          = ($tabConfig['mode'] ?? ($tabIds !== [] ? self::MODE_MANUAL : $mode));
                     $item['tabs'][(string) $tabIndex] = [
                         'product_ids' => $tabIds,
                         'mode'        => $tabMode === self::MODE_MANUAL && $tabIds !== [] ? self::MODE_MANUAL : self::MODE_AUTO,
                     ];
                 }
             } else {
-                $ids                = $this->validSelectedIds((array) ($config['product_ids'] ?? []));
+                $ids                 = $this->validSelectedIds((array) ($config['product_ids'] ?? []));
                 $item['product_ids'] = $ids;
                 if ($mode === self::MODE_MANUAL && $ids === []) {
                     $item['mode'] = self::MODE_AUTO;
@@ -253,6 +261,7 @@ class BestsellerSelectionService
                         'mode'        => self::MODE_MANUAL,
                         'product_ids' => $this->selectedIds(),
                     ];
+
                     break;
                 }
             }
@@ -268,7 +277,7 @@ class BestsellerSelectionService
             if ($module['code'] === 'tab_product') {
                 $state['tabs'] = [];
                 foreach ($module['tabs'] ?? [] as $tab) {
-                    $tabConfig = $config['tabs'][(string) $tab['index']] ?? ['mode' => self::MODE_AUTO, 'product_ids' => []];
+                    $tabConfig                             = $config['tabs'][(string) $tab['index']] ?? ['mode' => self::MODE_AUTO, 'product_ids' => []];
                     $state['tabs'][(string) $tab['index']] = [
                         'mode'        => $tabConfig['mode'] ?? self::MODE_AUTO,
                         'product_ids' => $this->normalizeIds($tabConfig['product_ids'] ?? []),
@@ -281,7 +290,7 @@ class BestsellerSelectionService
 
         return [
             'homepage_modules' => $this->homepageModules(),
-            'modules'         => $states,
+            'modules'          => $states,
         ];
     }
 
