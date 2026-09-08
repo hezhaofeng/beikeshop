@@ -4,6 +4,7 @@ namespace Tests\Unit\CyberCloak;
 
 use App\Http\Middleware\ShareViewData;
 use Beike\Models\Category;
+use Beike\Models\Page;
 use Beike\Models\Product;
 use Illuminate\Http\Request;
 use Plugin\CyberCloak\Middleware\Shop\ResolveStoreContext;
@@ -289,6 +290,23 @@ class CatalogResolverTest extends TestCase
         $context->reset();
 
         $this->assertSame('mysql', (new Product)->getConnection()->getName());
+    }
+
+    /**
+     * 页尾链接打开的页面及其商品关联保留在主库，不能查询展示库不存在的 page_products 表。
+     */
+    public function test_page_product_relation_stays_on_main_connection_in_public_mode(): void
+    {
+        $context = new StoreContext;
+        app()->instance(StoreContext::class, $context);
+        $context->activate(['mode' => StoreContext::PUBLIC]);
+
+        $relation = (new Page)->products();
+
+        $this->assertSame('mysql', $relation->getQuery()->getConnection()->getName());
+        $this->assertStringContainsString('page_products', $relation->toBase()->toSql());
+
+        $context->reset();
     }
 
     /**

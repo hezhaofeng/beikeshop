@@ -104,6 +104,21 @@ class PublishedSkuIndexTest extends TestCase
     }
 
     /**
+     * PayPal 商品解析必须固定使用已发布且已确认的两级映射，并且不能静默回退。
+     */
+    public function test_payment_mapping_requires_published_confirmed_catalog_data(): void
+    {
+        $service = file_get_contents(base_path('plugins/CyberCloak/Services/SkuMappingService.php'));
+
+        $this->assertStringContainsString('resolvePaymentItems', $service);
+        $this->assertStringContainsString("->where('status', 'published')", $service);
+        $this->assertStringContainsString("->where('sku_mappings.status', 'confirmed')", $service);
+        $this->assertStringContainsString("->where('product_mappings.status', 'confirmed')", $service);
+        $this->assertStringContainsString('展示 SKU 不存在或已停用', $service);
+        $this->assertStringContainsString('支付已停止', $service);
+    }
+
+    /**
      * 展示库不含客户收藏表，商品浏览不应预加载或懒加载该关系。
      */
     public function test_public_catalog_does_not_query_customer_wishlists(): void

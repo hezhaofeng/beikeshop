@@ -228,7 +228,9 @@ storage/app/catalog.json       展示商品导入 JSON
 public/image/catalog/          Cloak Banner 目标图片
 ```
 
-Docker 使用 `${APP_CODE_PATH:-./beikeshop}:/var/www/html` 挂载代码时，普通 PHP/Blade 代码同步后只需清理缓存；Dockerfile、PHP 扩展或 Composer 依赖变化时再重建镜像。
+Docker 使用 `${APP_CODE_PATH:-.}:/app` 挂载代码时，普通 PHP/Blade 代码同步后只需清理缓存；Dockerfile、PHP 扩展或 Composer 依赖变化时再重建镜像。`/app` 只是容器内工作目录，宿主机项目目录由 `APP_CODE_PATH` 决定。
+
+手工 LNMP 新部署默认使用执行安装脚本时的当前目录；需要指定目录时使用 `WEB_ROOT=/data/beikeshop ./install.sh`，不依赖 `/var/www`。
 
 ## 6. 部署和初始化顺序
 

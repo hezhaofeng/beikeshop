@@ -50,7 +50,7 @@ class ResolveStoreContext
      */
     private function applyCookie(mixed $response, array $cookie): void
     {
-        if (! is_object($response) || ! isset($response->headers)) {
+        if (! is_object($response) || ! isset($response->headers) || $response->headers === null) {
             return;
         }
 
@@ -85,7 +85,7 @@ class ResolveStoreContext
     private function applyCacheHeaders(mixed $response): void
     {
         if (! $this->settings->value('prevent_shared_cache', config('cyber_cloak_simple.prevent_shared_cache', true))
-            || ! is_object($response) || ! isset($response->headers)) {
+            || ! is_object($response) || ! isset($response->headers) || $response->headers === null) {
             return;
         }
 

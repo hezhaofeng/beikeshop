@@ -68,6 +68,136 @@ class SkuMappingService
     }
 
     /**
+     * 将真实订单商品解析为当前已发布的 Cloak 商品信息。
+     *
+     * 金额、数量和订单商品顺序由调用方保留；这里只替换提交给支付网关的名称和 SKU。
+     * 未发布、未确认、展示 SKU 已失效或展示商品缺少名称时直接失败，不能回退到真实商品信息。
+     *
+     * @param array<int,array<string,mixed>> $items
+     * @return array<int,array<string,mixed>>
+     */
+    public function resolvePaymentItems(array $items, string $locale = null): array
+    {
+        if ($items === []) {
+            throw new RuntimeException('订单没有可用于 CyberCloak 映射的商品明细');
+        }
+
+        $main    = DB::connection($this->mainConnection());
+        $version = (string) $main->table('catalog_mapping_versions')
+            ->where('status', 'published')
+            ->orderByDesc('published_at')
+            ->orderByDesc('id')
+            ->value('version');
+        if ($version === '') {
+            throw new RuntimeException('CyberCloak 没有已发布商品映射，请先发布完整映射版本');
+        }
+
+        $productIds = [];
+        $skuCodes   = [];
+        foreach ($items as $index => $item) {
+            if (! is_array($item)) {
+                throw new RuntimeException("第 {$index} 个订单商品格式无效，无法读取 CyberCloak 映射");
+            }
+
+            $productId = (int) ($item['source_product_id'] ?? 0);
+            $sku       = trim((string) ($item['sku'] ?? ''));
+            if ($productId < 1 || $sku === '') {
+                throw new RuntimeException("第 {$index} 个订单商品缺少真实商品 ID 或 SKU，无法读取 CyberCloak 映射");
+            }
+
+            $productIds[$productId] = $productId;
+            $skuCodes[$sku]         = $sku;
+        }
+
+        $mappingRows = $main->table('catalog_sku_mappings as sku_mappings')
+            ->join('catalog_product_mappings as product_mappings', function ($join): void {
+                $join->on('product_mappings.mapping_version', '=', 'sku_mappings.mapping_version')
+                    ->on('product_mappings.real_product_id', '=', 'sku_mappings.real_product_id');
+            })
+            ->where('sku_mappings.mapping_version', $version)
+            ->where('sku_mappings.status', 'confirmed')
+            ->where('product_mappings.status', 'confirmed')
+            ->whereIn('sku_mappings.real_product_id', array_values($productIds))
+            ->whereIn('sku_mappings.real_sku', array_values($skuCodes))
+            ->whereNotNull('sku_mappings.public_sku_id')
+            ->whereNotNull('sku_mappings.public_product_id')
+            ->get([
+                'sku_mappings.real_product_id',
+                'sku_mappings.real_sku',
+                'sku_mappings.public_sku_id',
+                'sku_mappings.public_sku',
+                'sku_mappings.public_product_id as sku_public_product_id',
+                'product_mappings.public_product_id as product_public_product_id',
+            ]);
+
+        $mappingByKey = [];
+        foreach ($mappingRows as $row) {
+            $key                  = $this->paymentMappingKey((int) $row->real_product_id, (string) $row->real_sku);
+            $mappingByKey[$key][] = $row;
+        }
+
+        $publicSkuIds = $mappingRows
+            ->pluck('public_sku_id')
+            ->map(fn ($id): int => (int) $id)
+            ->filter(fn (int $id): bool => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+        $publicSkus = $publicSkuIds === [] ? collect() : DB::connection($this->connection('public'))
+            ->table('product_skus as skus')
+            ->join('products', 'products.id', '=', 'skus.product_id')
+            ->whereIn('skus.id', $publicSkuIds)
+            ->where('skus.active', 1)
+            ->where('products.active', 1)
+            ->whereNull('products.deleted_at')
+            ->get(['skus.id', 'skus.product_id', 'skus.sku'])
+            ->keyBy('id');
+        $publicNames = $this->paymentProductNames(
+            $publicSkus->pluck('product_id')->map(fn ($id): int => (int) $id)->unique()->values()->all(),
+            $locale
+        );
+
+        $resolved = [];
+        foreach ($items as $index => $item) {
+            $productId = (int) $item['source_product_id'];
+            $sku       = trim((string) $item['sku']);
+            $key       = $this->paymentMappingKey($productId, $sku);
+            $rows      = $mappingByKey[$key] ?? [];
+            if (count($rows) !== 1) {
+                throw new RuntimeException("第 {$index} 个订单商品没有当前已发布且已确认的 CyberCloak 映射，支付已停止");
+            }
+
+            $mapping = $rows[0];
+            if ((int) $mapping->sku_public_product_id !== (int) $mapping->product_public_product_id) {
+                throw new RuntimeException("第 {$index} 个订单商品的 CyberCloak 商品映射存在冲突，支付已停止");
+            }
+
+            $publicSku = $publicSkus->get((int) $mapping->public_sku_id);
+            if (! $publicSku) {
+                throw new RuntimeException("第 {$index} 个订单商品对应的 CyberCloak 展示 SKU 不存在或已停用，支付已停止");
+            }
+
+            $publicProductId = (int) $publicSku->product_id;
+            $publicName      = trim((string) ($publicNames[$publicProductId] ?? ''));
+            $publicSkuCode   = trim((string) $publicSku->sku);
+            if ($publicProductId  !== (int) $mapping->sku_public_product_id
+                || $publicSkuCode !== trim((string) $mapping->public_sku)) {
+                throw new RuntimeException("第 {$index} 个订单商品的 CyberCloak 展示 SKU 已变化，请重新发布商品映射后再支付");
+            }
+            if ($publicName === '' || $publicSkuCode === '') {
+                throw new RuntimeException("第 {$index} 个订单商品对应的 CyberCloak 展示商品名称或 SKU 为空，支付已停止");
+            }
+
+            $resolved[] = array_merge($item, [
+                'name' => mb_substr($publicName, 0, 127),
+                'sku'  => mb_substr($publicSkuCode, 0, 127),
+            ]);
+        }
+
+        return $resolved;
+    }
+
+    /**
      * 汇总后台映射面板需要的版本、待确认 SKU 和路由数量。
      *
      * @return array<string,mixed>
@@ -254,6 +384,55 @@ class SkuMappingService
                 'candidates'      => $candidateItems,
             ];
         })->values()->all();
+    }
+
+    private function paymentMappingKey(int $productId, string $sku): string
+    {
+        return $productId . "\0" . trim($sku);
+    }
+
+    /**
+     * 优先使用当前请求语言，其次使用应用默认语言和英文，最后再取展示库中的任意有效语言。
+     *
+     * @param array<int,int> $productIds
+     * @return array<int,string>
+     */
+    private function paymentProductNames(array $productIds, ?string $locale): array
+    {
+        if ($productIds === []) {
+            return [];
+        }
+
+        $locales = array_values(array_unique(array_filter([
+            trim((string) $locale),
+            trim((string) (function_exists('locale') ? locale() : '')),
+            trim((string) config('app.locale', '')),
+            'en',
+        ])));
+        $priority = array_flip($locales);
+        $names    = [];
+
+        foreach (DB::connection($this->connection('public'))->table('product_descriptions')
+            ->whereIn('product_id', $productIds)
+            ->orderBy('id')
+            ->get(['id', 'product_id', 'locale', 'name']) as $row) {
+            $name = trim((string) $row->name);
+            if ($name === '') {
+                continue;
+            }
+
+            $productId      = (int) $row->product_id;
+            $localePriority = $priority[(string) $row->locale] ?? count($priority) + 1;
+            $existing       = $names[$productId]               ?? null;
+            if ($existing === null || $localePriority < $existing['priority']) {
+                $names[$productId] = [
+                    'priority' => $localePriority,
+                    'name'     => $name,
+                ];
+            }
+        }
+
+        return array_map(static fn (array $value): string => $value['name'], $names);
     }
 
     /**

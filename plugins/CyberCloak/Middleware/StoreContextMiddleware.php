@@ -42,7 +42,7 @@ abstract class StoreContextMiddleware
      */
     private function applyCookie(mixed $response, array $cookie): void
     {
-        if (! is_object($response) || ! isset($response->headers)) {
+        if (! is_object($response) || ! isset($response->headers) || $response->headers === null) {
             return;
         }
 
@@ -76,7 +76,7 @@ abstract class StoreContextMiddleware
      */
     private function applyCacheHeaders(mixed $response): void
     {
-        if (! config('cyber_cloak.prevent_shared_cache', true) || ! is_object($response) || ! isset($response->headers)) {
+        if (! config('cyber_cloak.prevent_shared_cache', true) || ! is_object($response) || ! isset($response->headers) || $response->headers === null) {
             return;
         }
 

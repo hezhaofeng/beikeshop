@@ -45,7 +45,20 @@ class Page extends Base
 
     public function products(): BelongsToMany
     {
-        return $this->belongsToMany(Product::class, PageProduct::class, 'page_id', 'product_id')->withTimestamps();
+        // 页面及其 page_products 关联属于主库配置，不能随前台商品上下文切到展示商品库。
+        $connection = $this->getConnectionName() ?: config('database.default');
+        $product    = (new Product)->setConnection($connection);
+
+        return $this->newBelongsToMany(
+            $product->newQuery(),
+            $this,
+            PageProduct::class,
+            'page_id',
+            'product_id',
+            $this->getKeyName(),
+            $product->getKeyName(),
+            __FUNCTION__,
+        )->withTimestamps();
     }
 
     public function getUrlAttribute()
