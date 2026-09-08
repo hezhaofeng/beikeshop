@@ -30,6 +30,9 @@ class CustomMailService
         'western_union',
     ];
 
+    /** 待支付类邮件允许配置支付方式专用模板的支付方式。 */
+    public const PAYMENT_METHOD_TEMPLATE_CODES = self::PAYMENT_INFO_PAYMENT_CODES;
+
     public const PAYMENT_INFO_PLACEHOLDER = '{{payment_info_html}}';
 
     public const PAYMENT_REMINDER_EVENT = 'order_payment_reminder';
@@ -190,10 +193,10 @@ class CustomMailService
     }
 
     /**
-     * 根据订单支付方式选择待支付类模板。
+     * 根据受支持的线下支付方式选择待支付类模板。
      *
      * 旧版场景模板仍作为通用模板；专用模板只有在主题和正文都填写后才生效，
-     * 避免新增支付方式的空配置覆盖通用模板。
+     * 其他支付方式始终回退到通用模板。
      */
     public function paymentMethodTemplate(array $settings, string $event, mixed $order = null): array
     {
@@ -203,7 +206,8 @@ class CustomMailService
         unset($generic['payment_methods']);
 
         $paymentCode = trim((string) data_get($order, 'payment_method_code', ''));
-        $specific    = is_array($paymentTemplates) && $paymentCode !== ''
+        $specific    = is_array($paymentTemplates)
+            && in_array($paymentCode, self::PAYMENT_METHOD_TEMPLATE_CODES, true)
             ? ($paymentTemplates[$paymentCode] ?? null)
             : null;
 

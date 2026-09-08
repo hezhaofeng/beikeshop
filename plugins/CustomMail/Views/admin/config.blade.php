@@ -21,6 +21,10 @@
   $paymentInfo = old('payment_info', $setting['payment_info'] ?? []);
   $paymentInfo = is_array($paymentInfo) ? $paymentInfo : [];
   $paymentMethods = is_array($paymentMethods ?? null) ? $paymentMethods : [];
+  $paymentMethods = array_values(array_filter($paymentMethods, function ($paymentMethod) use ($paymentInfoCodes) {
+    return is_array($paymentMethod)
+      && in_array((string) ($paymentMethod['code'] ?? ''), $paymentInfoCodes, true);
+  }));
   $paymentMethodTemplateEvents = \Plugin\CustomMail\Services\CustomMailService::PAYMENT_METHOD_TEMPLATE_EVENTS;
   $paymentMethodTemplates = [];
   foreach ($paymentMethodTemplateEvents as $paymentMethodTemplateEvent) {
@@ -30,16 +34,10 @@
       : [];
   }
   if ($paymentMethods === []) {
-    $savedPaymentCodes = [];
-    foreach ($paymentMethodTemplates as $savedTemplates) {
-      $savedPaymentCodes = array_merge($savedPaymentCodes, array_keys($savedTemplates));
-    }
-    foreach (array_unique($savedPaymentCodes) as $paymentCode) {
-      $paymentCode = trim((string) $paymentCode);
-      if ($paymentCode !== '') {
-        $paymentMethods[] = ['code' => $paymentCode, 'label' => "已保存配置（{$paymentCode}）", 'enabled' => false];
-      }
-    }
+    $paymentMethods = [
+      ['code' => 'offline_transfer', 'label' => 'Offline Transfer', 'enabled' => true],
+      ['code' => 'western_union', 'label' => 'Western Union', 'enabled' => true],
+    ];
   }
   $events = \Plugin\CustomMail\Services\CustomMailService::EVENTS;
   $defaults = [
@@ -249,7 +247,7 @@
               <div class="border-top mt-4 pt-4">
                 <h6 class="mb-1">支付方式专用模板</h6>
                 <div class="help-text font-size-12 lh-base mb-3">
-                  订单支付方式编码精确匹配专用模板；未配置或未匹配时使用上面的通用模板。新启用的支付插件会自动出现在这里。
+                  仅用于 Offline Transfer 和 Western Union；其他支付方式（包括原生 PayPal）统一使用上面的通用模板。
                 </div>
 
                 @if ($paymentMethods === [])

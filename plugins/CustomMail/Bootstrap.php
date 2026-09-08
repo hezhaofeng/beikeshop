@@ -4,7 +4,6 @@ namespace Plugin\CustomMail;
 
 use Beike\Models\Order;
 use Beike\Models\Rma;
-use Beike\Repositories\PluginRepo;
 use Plugin\CustomMail\Services\CustomMailService;
 
 /**
@@ -61,60 +60,10 @@ class Bootstrap
                 return $data;
             }
 
-            $methods = [];
-
-            try {
-                foreach (PluginRepo::getPaymentMethods() as $payment) {
-                    $paymentPlugin = $payment->plugin ?? null;
-                    $code          = trim((string) ($payment->code ?? ''));
-                    if ($code === '' || isset($methods[$code])) {
-                        continue;
-                    }
-
-                    $methods[$code] = [
-                        'code'    => $code,
-                        'label'   => $paymentPlugin?->getLocaleName() ?: $code,
-                        'enabled' => true,
-                    ];
-                }
-
-                // 保留已启用但因币种等运行时条件暂未出现在支付列表中的支付插件。
-                foreach (PluginRepo::allPlugins()->where('type', 'payment') as $payment) {
-                    $paymentPlugin = plugin($payment->code);
-                    $code          = trim((string) ($payment->code ?? ''));
-                    if ($code === '' || isset($methods[$code]) || ! $paymentPlugin?->getEnabled()) {
-                        continue;
-                    }
-
-                    $methods[$code] = [
-                        'code'    => $code,
-                        'label'   => $paymentPlugin->getLocaleName() ?: $code,
-                        'enabled' => true,
-                    ];
-                }
-            } catch (\Throwable $exception) {
-                report($exception);
-            }
-
-            $savedCodes = [];
-            foreach (CustomMailService::PAYMENT_METHOD_TEMPLATE_EVENTS as $event) {
-                $saved = data_get($plugin->getSetting(), 'templates.' . $event . '.payment_methods', []);
-                if (is_array($saved)) {
-                    $savedCodes = array_merge($savedCodes, array_keys($saved));
-                }
-            }
-            foreach (array_unique($savedCodes) as $code) {
-                $code = trim((string) $code);
-                if ($code !== '' && ! isset($methods[$code])) {
-                    $methods[$code] = [
-                        'code'    => $code,
-                        'label'   => "已保存配置（{$code}）",
-                        'enabled' => false,
-                    ];
-                }
-            }
-
-            $data['paymentMethods'] = array_values($methods);
+            $data['paymentMethods'] = [
+                ['code' => 'offline_transfer', 'label' => 'Offline Transfer', 'enabled' => true],
+                ['code' => 'western_union', 'label' => 'Western Union', 'enabled' => true],
+            ];
 
             return $data;
         });

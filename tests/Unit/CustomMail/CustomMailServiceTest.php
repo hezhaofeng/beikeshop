@@ -146,9 +146,9 @@ class CustomMailServiceTest extends TestCase
                     'subject'         => '通用主题',
                     'body'            => '通用正文',
                     'payment_methods' => [
-                        'wise' => [
-                            'subject' => 'Wise 主题',
-                            'body'    => 'Wise 正文',
+                        'paypal' => [
+                            'subject' => 'PayPal 主题',
+                            'body'    => 'PayPal 正文',
                         ],
                         'western_union' => [
                             'subject' => '',
@@ -159,11 +159,11 @@ class CustomMailServiceTest extends TestCase
             ],
         ];
 
-        $wiseOrder         = (object) ['payment_method_code' => 'wise'];
+        $paypalOrder       = (object) ['payment_method_code' => 'paypal'];
         $stripeOrder       = (object) ['payment_method_code' => 'stripe'];
         $westernUnionOrder = (object) ['payment_method_code' => 'western_union'];
 
-        $this->assertSame('Wise 主题', $service->paymentReminderTemplate($settings, $wiseOrder)['subject']);
+        $this->assertSame('通用主题', $service->paymentReminderTemplate($settings, $paypalOrder)['subject']);
         $this->assertSame('通用主题', $service->paymentReminderTemplate($settings, $stripeOrder)['subject']);
         $this->assertSame('通用主题', $service->paymentReminderTemplate($settings, $westernUnionOrder)['subject']);
     }
