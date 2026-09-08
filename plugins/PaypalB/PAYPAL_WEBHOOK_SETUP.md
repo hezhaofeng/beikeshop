@@ -133,4 +133,3 @@ Live 的点法和 Sandbox 完全一样，差别只有两个：
 如果 PayPal 页面提供 `Send test`、`Webhook simulator` 或类似按钮，可以先发一条测试事件；最小验证事件建议用 `PAYMENT.CAPTURE.COMPLETED`。
 
 如果测试事件能在 B 站后台看到对应 webhook 记录，说明地址、`Webhook ID` 和验签链路都基本正确。
-
