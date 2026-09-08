@@ -114,7 +114,7 @@ return [
     'address_phoner_equired'      => 'Numero di telefono obbligatorio',
     'address_post_code'           => 'Codice postale obbligatorio',
     'hot_keywords'                => 'Parole chiave popolari',
-    'hot_keywords_tips'           => 'Parole chiave popolari, separate da virgola',
+    'hot_keywords_tips'           => 'Parole chiave di riserva finché non sono disponibili dati di ricerca reali; separarle con virgole',
     'practical_functions'         => 'Impostazioni funzione',
     'basic_help'                  => 'Nome del negozio, Meta tag, numero di contatto, modalità di manutenzione e debug, ecc.',
     'store_help'                  => 'Indirizzo, valuta, lingua, gruppi di clienti, parole chiave di ricerca più comuni, ecc.',

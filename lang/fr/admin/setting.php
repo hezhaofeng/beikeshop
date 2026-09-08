@@ -115,7 +115,7 @@ return [
     'address_phoner_equired'      => 'Téléphone de l\'adresse requis',
     'address_post_code'           => 'Code postal requis',
     'hot_keywords'                => 'Mots-clés populaires',
-    'hot_keywords_tips'           => 'Mots-clés populaires, séparés par des virgules',
+    'hot_keywords_tips'           => 'Mots-clés de secours jusqu’à disponibilité de données de recherche réelles ; séparez-les par des virgules',
     'practical_functions'         => 'Paramètres des fonctions',
     'basic_help'                  => 'Nom de la boutique, balises méta, numéro de téléphone, modes maintenance et débogage, etc.',
     'store_help'                  => 'Adresse, devise, langue, groupes de clients, mots-clés de recherche populaires, etc.',

@@ -116,7 +116,7 @@ return [
     'address_phoner_equired'      => 'Telefonnummer in Adresse erforderlich',
     'address_post_code'           => 'Postleitzahl erforderlich',
     'hot_keywords'                => 'Beliebte Suchbegriffe',
-    'hot_keywords_tips'           => 'Beliebte Suchbegriffe, mehrere Begriffe durch Komma getrennt',
+    'hot_keywords_tips'           => 'Fallback-Suchbegriffe bis echte Suchdaten vorliegen; mehrere Begriffe durch Kommas trennen',
     'practical_functions'         => 'Funktionseinstellungen',
     'basic_help'                  => 'Shop-Name, Meta-Tags, Kontakttelefon, Wartungs- und Debug-Modi usw.',
     'store_help'                  => 'Adresse, Währung, Sprache, Kundengruppe, beliebte Suchbegriffe usw.',

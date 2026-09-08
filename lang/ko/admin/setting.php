@@ -116,7 +116,7 @@ return [
     'address_phoner_equired'      => '주소 전화 필수',
     'address_post_code'           => '우편번호 필수',
     'hot_keywords'                => '인기 검색 키워드',
-    'hot_keywords_tips'           => '인기 검색 키워드, 여러 키워드는 반각 쉼표로 구분하세요',
+    'hot_keywords_tips'           => '실제 검색 데이터가 쌓일 때까지 사용할 대체 키워드입니다. 여러 키워드는 반각 쉼표로 구분하세요',
     'practical_functions'         => '함수 설정',
     'basic_help'                  => '매장 이름, 메타 태그, 연락처, 유지 관리 및 디버깅 모드 등',
     'store_help'                  => '주소, 통화, 언어, 고객 그룹, 인기 검색어 등',

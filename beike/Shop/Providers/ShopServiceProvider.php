@@ -108,8 +108,15 @@ class ShopServiceProvider extends ServiceProvider
      */
     protected function loadMailConfig()
     {
-        $mailEngine = system_setting('base.mail_engine');
-        $storeMail  = system_setting('base.email', '');
+        $mailEngine            = system_setting('base.mail_engine');
+        $configuredFromAddress = trim((string) system_setting('base.mail_from_address', ''));
+        $storeMail             = $configuredFromAddress !== ''
+            ? $configuredFromAddress
+            : trim((string) system_setting('base.email', ''));
+        $configuredFromName    = trim((string) system_setting('base.mail_from_name', ''));
+        $storeName             = $configuredFromName !== ''
+            ? $configuredFromName
+            : system_setting('base.store_name', \config('app.name'));
 
         if (empty($mailEngine)) {
             return;
@@ -120,12 +127,12 @@ class ShopServiceProvider extends ServiceProvider
 
         Config::set('mail.default', $mailEngine);
         Config::set('mail.from.address', $storeMail);
-        Config::set('mail.from.name', system_setting('base.store_name', \config('app.name')));
+        Config::set('mail.from.name', $storeName);
 
         if ($setting = system_setting('base.smtp')) {
             $setting['transport'] = 'smtp';
             // 如果$setting['username']的值为一个合法的email地址
-            if (filter_var($setting['username'], FILTER_VALIDATE_EMAIL)) {
+            if ($configuredFromAddress === '' && filter_var($setting['username'], FILTER_VALIDATE_EMAIL)) {
                 Config::set('mail.from.address', $setting['username']);
             }
             Config::set('mail.mailers.smtp', $setting);

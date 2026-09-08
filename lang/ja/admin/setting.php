@@ -116,7 +116,7 @@ return [
     'address_phoner_equired'      => 'アドレス電話は必須です',
     'address_post_code'           => '郵便番号必須',
     'hot_keywords'                => '人気検索キーワード',
-    'hot_keywords_tips'           => '人気検索キーワード、複数のキーワードは半角カンマで区切ってください',
+    'hot_keywords_tips'           => '実際の検索データが蓄積されるまで使用する予備キーワードです。複数の場合は半角カンマで区切ってください',
     'practical_functions'         => '機能設定',
     'basic_help'                  => 'ストア名、メタタグ、連絡先、メンテナンスおよびデバッグモードなど',
     'store_help'                  => '住所、通貨、言語、顧客グループ、人気の検索キーワードなど',

@@ -116,7 +116,7 @@ return [
     'address_phoner_equired'      => '地址電話必填',
     'address_post_code'           => '郵編必填',
     'hot_keywords'                => '熱搜關鍵詞',
-    'hot_keywords_tips'           => '熱搜關鍵詞，多個關鍵詞用半角逗號分隔',
+    'hot_keywords_tips'           => '暫無真實搜尋資料時的備用關鍵詞，多個關鍵詞用半形逗號分隔',
     'practical_functions'         => '功能設定',
     'basic_help'                  => '商店名稱、Meta 標籤、聯絡電話、維護和調試模式等',
     'store_help'                  => '地址、貨幣、語言、客戶群、熱搜關鍵字等',

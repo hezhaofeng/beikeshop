@@ -41,6 +41,12 @@ class SettingService
             }
         }
 
+        if (isset($settings['mail_from_address']) && $settings['mail_from_address'] !== '') {
+            if (! filter_var($settings['mail_from_address'], FILTER_VALIDATE_EMAIL)) {
+                throw new Exception(trans('admin/setting.mail_from_address_invalid'));
+            }
+        }
+
         foreach ($settings as $key => $value) {
             SettingRepo::storeValue($key, $value);
         }

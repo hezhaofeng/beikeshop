@@ -36,6 +36,15 @@
           <div v-if="mail_engine == 'log'" class="help-text font-size-12 lh-base">{{ __('admin/setting.mail_log') }}</div>
         </x-admin::form.row>
 
+        <div v-if="mail_engine != ''">
+          <x-admin-form-input name="mail_from_address" type="email" title="{{ __('admin/setting.mail_from_address') }}" value="{{ old('mail_from_address', system_setting('base.mail_from_address', '')) }}">
+            <div class="help-text font-size-12 lh-base">{{ __('admin/setting.mail_from_address_info') }}</div>
+          </x-admin-form-input>
+          <x-admin-form-input name="mail_from_name" title="{{ __('admin/setting.mail_from_name') }}" value="{{ old('mail_from_name', system_setting('base.mail_from_name', '')) }}">
+            <div class="help-text font-size-12 lh-base">{{ __('admin/setting.mail_from_name_info') }}</div>
+          </x-admin-form-input>
+        </div>
+
         <div v-if="mail_engine == 'smtp'">
           <x-admin-form-input name="smtp[host]" required title="{{ __('admin/setting.smtp_host') }}" value="{{ old('host', system_setting('base.smtp.host', '')) }}">
           </x-admin-form-input>

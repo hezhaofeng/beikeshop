@@ -114,7 +114,7 @@ return [
     'address_phoner_equired'      => 'Nomor telepon wajib diisi',
     'address_post_code'           => 'Kode pos wajib diisi',
     'hot_keywords'                => 'Kata kunci trending',
-    'hot_keywords_tips'           => 'Kata kunci trending, beberapa kata kunci dipisahkan dengan koma',
+    'hot_keywords_tips'           => 'Kata kunci cadangan hingga data pencarian nyata tersedia; pisahkan beberapa kata kunci dengan koma',
     'practical_functions'         => 'Pengaturan fungsi',
     'basic_help'                  => 'Nama toko, tag Meta, nomor kontak, mode pemeliharaan dan debugging, dll.',
     'store_help'                  => 'Alamat, mata uang, bahasa, grup pelanggan, kata kunci pencarian populer, dll.',
