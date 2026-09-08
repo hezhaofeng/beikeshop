@@ -4,6 +4,10 @@
 !LatestProducts
 !Openai
 !Paypal
+!PaypalA
+!PaypalA/**
+!PaypalB
+!PaypalB/**
 !Social
 !Stripe
 !BkAi
@@ -32,3 +36,7 @@
 !HomepageCarouselLink/**
 !ProductCustomization
 !ProductCustomization/**
+!CustomMail
+!CustomMail/**
+!Meilisearch
+!Meilisearch/**

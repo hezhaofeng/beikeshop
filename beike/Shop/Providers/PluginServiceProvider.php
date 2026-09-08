@@ -355,6 +355,11 @@ class PluginServiceProvider extends ServiceProvider
             $builders   = glob($plugin->getPath() . '/Console/' . '*');
             $pluginCode = $plugin->getDirname();
             foreach ($builders as $builder) {
+                // Console 下可以放 Concerns 等 trait 子目录，只注册直接存在的 PHP 命令文件。
+                if (! is_file($builder) || strtolower(pathinfo($builder, PATHINFO_EXTENSION)) !== 'php') {
+                    continue;
+                }
+
                 $builderName   = basename($builder, '.php');
                 $componentName = Str::studly($builderName);
                 $classBaseName = "Plugin\\{$pluginCode}\\Console\\{$componentName}";

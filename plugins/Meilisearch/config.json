@@ -1,0 +1,19 @@
+{
+    "code": "meilisearch",
+    "name": {
+        "zh_cn": "Meilisearch 商品搜索",
+        "en": "Meilisearch Product Search"
+    },
+    "description": {
+        "zh_cn": "使用自托管 Meilisearch 提供商品全文搜索，并在故障时自动回退 MySQL。",
+        "en": "Full-text product search backed by self-hosted Meilisearch with automatic MySQL fallback."
+    },
+    "type": "feature",
+    "version": "v1.0.0",
+    "local_development": true,
+    "icon": "/image/logo.svg",
+    "author": {
+        "name": "BeikeShop",
+        "email": "service@beikeshop.com"
+    }
+}
