@@ -681,19 +681,23 @@ function to_sql($builder): array|string|null
 }
 
 /**
- * 递归创建文件夹
- * @param $directoryPath
+ * 递归创建 public 下的文件夹。
+ *
+ * @param  string  $directoryPath
  */
-function create_directories($directoryPath)
+function create_directories($directoryPath): bool
 {
-    $path        = '';
-    $directories = explode('/', $directoryPath);
-    foreach ($directories as $directory) {
-        $path = $path . '/' . $directory;
-        if (! is_dir(public_path($path))) {
-            @mkdir(public_path($path), 0755);
-        }
+    $directoryPath = trim((string) $directoryPath, "/\\");
+    if ($directoryPath === '' || str_contains($directoryPath, '..')) {
+        return false;
     }
+
+    $absolutePath = public_path($directoryPath);
+    if (is_dir($absolutePath)) {
+        return true;
+    }
+
+    return @mkdir($absolutePath, 0775, true) || is_dir($absolutePath);
 }
 
 /**

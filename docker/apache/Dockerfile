@@ -45,8 +45,12 @@ RUN a2dissite 000-default && a2ensite beikeshop
 # Create log directory
 RUN mkdir -p /var/log/php
 
-WORKDIR /var/www/html
+# Bind mounts may replace the image's directory ownership; repair all runtime-writable paths before Apache starts.
+RUN printf '#!/bin/sh\nmkdir -p storage bootstrap/cache public/cache\nchown -R www-data:www-data storage bootstrap/cache public\nchmod -R ug+rwX storage bootstrap/cache public\nexec apache2-foreground\n' > /usr/local/bin/beikeshop-entrypoint \
+    && chmod +x /usr/local/bin/beikeshop-entrypoint
+
+WORKDIR /app
 
 EXPOSE 80 443
 
-CMD ["apache2-foreground"]
+CMD ["/usr/local/bin/beikeshop-entrypoint"]

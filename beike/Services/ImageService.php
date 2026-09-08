@@ -12,8 +12,10 @@
 
 namespace Beike\Services;
 
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Intervention\Image\Exception\NotReadableException;
+use Intervention\Image\Exception\NotWritableException;
 use Intervention\Image\Facades\Image;
 
 class ImageService
@@ -81,7 +83,14 @@ class ImageService
             $newImagePath = public_path($newImage);
             if (! is_file($newImagePath) || (filemtime($this->imagePath) > filemtime($newImagePath))) {
                 ini_set('memory_limit', '-1');
-                create_directories(dirname($newImage));
+                $cacheDirectory = dirname($newImagePath);
+                if (! create_directories(dirname($newImage)) || ! is_writable($cacheDirectory)) {
+                    Log::warning('图片缓存目录不可写，已回退到原图。', [
+                        'path' => $cacheDirectory,
+                    ]);
+
+                    return $this->originUrl();
+                }
                 $img = Image::make($this->imagePath);
 
                 $img->resize($width, $height, function ($constraint) {
@@ -101,7 +110,12 @@ class ImageService
             $newImage = $data['newImage'];
 
             return asset($newImage);
-        } catch (NotReadableException $e) {
+        } catch (NotReadableException|NotWritableException $e) {
+            Log::warning('图片缓存生成失败，已回退到原图。', [
+                'path'  => $newImagePath ?? null,
+                'error' => $e->getMessage(),
+            ]);
+
             return $this->originUrl();
         }
     }

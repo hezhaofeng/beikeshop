@@ -36,7 +36,8 @@ INSTALL_MODE="${INSTALL_MODE:-release}"  # release or source
 
 # Environment type
 ENV_TYPE=""
-WEB_ROOT=""
+# 已有源码时始终使用源码目录；新部署可通过 WEB_ROOT 指定位置。
+WEB_ROOT="${WEB_ROOT:-}"
 PHP_UPSTREAM=""
 BT_PHP_BIN=""
 BT_PHP_VERSION=""
@@ -787,7 +788,7 @@ set_environment() {
             if [ -f "${SCRIPT_DIR}/artisan" ]; then
                 WEB_ROOT="${SCRIPT_DIR}"
             else
-                WEB_ROOT="/www/wwwroot/${PROJECT_NAME}"
+                WEB_ROOT="${WEB_ROOT:-/www/wwwroot/${PROJECT_NAME}}"
             fi
             detect_baota_services
             ;;
@@ -795,7 +796,7 @@ set_environment() {
             if [ -f "${SCRIPT_DIR}/artisan" ]; then
                 WEB_ROOT="${SCRIPT_DIR}"
             else
-                WEB_ROOT="$(pwd)/beikeshop"
+                WEB_ROOT="${WEB_ROOT:-$(pwd)/beikeshop}"
             fi
             print_success "Using Docker environment"
             ;;
@@ -803,7 +804,7 @@ set_environment() {
             if [ -f "${SCRIPT_DIR}/artisan" ]; then
                 WEB_ROOT="${SCRIPT_DIR}"
             else
-                WEB_ROOT="/var/www/${PROJECT_NAME}"
+                WEB_ROOT="${WEB_ROOT:-$(pwd)/${PROJECT_NAME}}"
             fi
             detect_manual_php_upstream
             print_success "Using Manual LNMP environment"
@@ -1216,7 +1217,7 @@ install_baota() {
     print_info "Setting directory permissions..."
     chown -R www:www "${WEB_ROOT}" 2>/dev/null || print_warn "Some files could not be chowned to www:www, continuing."
     chmod -R 755 "${WEB_ROOT}" 2>/dev/null || print_warn "Some files could not be chmod 755, continuing."
-    chmod -R 775 "${WEB_ROOT}/storage" "${WEB_ROOT}/bootstrap/cache" 2>/dev/null || print_warn "Some writable directories could not be chmod 775, continuing."
+    chmod -R 775 "${WEB_ROOT}/storage" "${WEB_ROOT}/bootstrap/cache" "${WEB_ROOT}/public/cache" 2>/dev/null || print_warn "Some writable directories could not be chmod 775, continuing."
 
     # Set website root to public/
     print_info "Website root: ${WEB_ROOT}/public"
@@ -1293,7 +1294,7 @@ EOF
     print_info "Setting directory permissions..."
     sudo chown -R www-data:www-data "${WEB_ROOT}"
     sudo chmod -R 755 "${WEB_ROOT}"
-    sudo chmod -R 775 "${WEB_ROOT}/storage" "${WEB_ROOT}/bootstrap/cache"
+    sudo chmod -R 775 "${WEB_ROOT}/storage" "${WEB_ROOT}/bootstrap/cache" "${WEB_ROOT}/public/cache"
 
     # Set website root to public/
     print_info "Website root: ${WEB_ROOT}/public"

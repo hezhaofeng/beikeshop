@@ -1,6 +1,6 @@
 FROM php:8.2-fpm
 
-# 安装系统依赖、Nginx、Node.js 22，以及编译 Intl 所需的 ICU 开发库
+# Install system dependencies + Nginx + Node.js 22
 RUN apt-get update && apt-get install -y \
     nginx \
     git \
@@ -15,7 +15,6 @@ RUN apt-get update && apt-get install -y \
     libonig-dev \
     libxml2-dev \
     libzip-dev \
-    libicu-dev \
     zip \
     unzip \
     bash \
@@ -33,7 +32,6 @@ RUN apt-get update && apt-get install -y \
         gd \
         simplexml \
         zip \
-        intl \
         opcache \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -54,7 +52,7 @@ RUN mkdir -p /var/log/nginx /var/log/php /run/php
 RUN printf '#!/bin/sh\nmkdir -p storage bootstrap/cache public\nchown -R www-data:www-data storage bootstrap/cache public\nchmod -R ug+rwX storage bootstrap/cache public\nphp-fpm -D\nexec nginx -g "daemon off;"\n' > /start.sh \
     && chmod +x /start.sh
 
-WORKDIR /app
+WORKDIR /var/www/html
 
 EXPOSE 80 443
 
