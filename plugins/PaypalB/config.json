@@ -1,0 +1,18 @@
+{
+    "code": "paypal_b",
+    "name": {
+        "zh_cn": "Paypal",
+        "en": "Paypal"
+    },
+    "description": {
+        "zh_cn": "B 站跨站 PayPal 收款网关，提供收款账号轮询、PayPal Orders API、Webhook 核验及向 A 站的签名回调。",
+        "en": "Site B cross-site PayPal gateway with account rotation, Orders API, webhook verification, and signed callbacks to Site A."
+    },
+    "type": "service",
+    "version": "v1.1.0",
+    "local_development": true,
+    "author": {
+        "name": "BeikeShop",
+        "email": "service@beikeshop.com"
+    }
+}

@@ -23,6 +23,19 @@ class Kernel extends ConsoleKernel
     protected function schedule(Schedule $schedule)
     {
         $schedule->command('process:order')->everyFiveMinutes();
+
+        $paypalB = plugin('paypal_b');
+        if ($paypalB && $paypalB->getEnabled()) {
+            $schedule->command('paypal-b:dispatch-callbacks')->everyMinute();
+        }
+
+        $paypalA = plugin('paypal_a');
+        if ($paypalA && $paypalA->getEnabled()) {
+            // 同步补投单条最长 30 秒，必须防止上一轮未跑完就重入。
+            $schedule->command('paypal-a:dispatch-fulfillment')
+                ->everyFiveMinutes()
+                ->withoutOverlapping();
+        }
     }
 
     /**

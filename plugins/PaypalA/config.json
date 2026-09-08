@@ -1,0 +1,18 @@
+{
+    "code": "paypal_a",
+    "name": {
+        "zh_cn": "Paypal",
+        "en": "Paypal"
+    },
+    "description": {
+        "zh_cn": "A 站订单支付插件。它将一次性支付会话以签名方式交给 B 站 PayPal 网关处理，A 站只在收到已核验的完成结果后更新订单状态。",
+        "en": "Site A payment plugin that delegates a signed one-time payment session to the Site B PayPal gateway."
+    },
+    "type": "payment",
+    "version": "v1.1.0",
+    "local_development": true,
+    "author": {
+        "name": "BeikeShop",
+        "email": "service@beikeshop.com"
+    }
+}
