@@ -3,6 +3,7 @@
 namespace Beike\Shop\Http\Controllers;
 
 use Beike\Models\Product;
+use Beike\Repositories\CategoryRepo;
 use Beike\Repositories\ProductRepo;
 use Beike\Shop\Http\Resources\ProductDetail;
 use Beike\Shop\Http\Resources\ProductSimple;
@@ -47,17 +48,21 @@ class ProductController extends Controller
      */
     public function search(Request $request)
     {
-        $keyword  = $request->get('keyword');
-        $attr     = $request->get('attr');
-        $price    = $request->get('price');
-        $products = ProductRepo::getBuilder(['keyword' => $keyword, 'attr' => $attr])
+        $filters = $request->only(['keyword', 'attr', 'price', 'sort', 'order', 'per_page']);
+        $perPage = (int) ($filters['per_page'] ?? perPage());
+        if (! in_array($perPage, CategoryRepo::getPerPages(), true)) {
+            $perPage = perPage();
+        }
+
+        $products = ProductRepo::getBuilder($filters)
             ->where('active', true)
-            ->paginate(perPage())
+            ->paginate($perPage)
             ->withQueryString();
 
         $data = [
-            'products' => $products,
-            'items'    => ProductSimple::collection($products)->jsonSerialize(),
+            'products'  => $products,
+            'items'     => ProductSimple::collection($products)->jsonSerialize(),
+            'per_pages' => CategoryRepo::getPerPages(),
         ];
 
         $data = hook_filter('product.search.data', $data);

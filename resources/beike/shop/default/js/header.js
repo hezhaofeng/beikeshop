@@ -10,21 +10,10 @@ $(function () {
   // 搜索弹出层交互
   const myOffcanvas = document.getElementById("offcanvas-search-top");
   if (myOffcanvas) {
+    // 仅负责聚焦；搜索提交（回车与按钮）统一由 search-popover 组件处理，
+    // 避免两处各自拼接搜索 URL，其中相对路径在非首页会跳到错误地址。
     myOffcanvas.addEventListener("shown.bs.offcanvas", function () {
       $("#offcanvas-search-top input").focus();
-
-      $("#offcanvas-search-top input").keydown(function (e) {
-        if (e.keyCode == 13) {
-          if ($(this).val() != "") {
-            var lang = $(this).data("lang");
-            if (lang) {
-              location.href = "/" + lang + "/products/search?keyword=" + $(this).val();
-            } else {
-              location.href = "products/search?keyword=" + $(this).val();
-            }
-          }
-        }
-      });
     });
   }
 

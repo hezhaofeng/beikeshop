@@ -36,6 +36,7 @@ class Kernel extends HttpKernel
             \App\Http\Middleware\SetAppTimezone::class,
             \App\Http\Middleware\SetLocaleFromSession::class,
             \App\Http\Middleware\ShareViewData::class,
+            \Beike\Shop\Http\Middleware\TrackSearchKeyword::class,
             \Illuminate\View\Middleware\ShareErrorsFromSession::class,
             \App\Http\Middleware\MaintenanceMode::class,
             \App\Http\Middleware\VerifyCsrfToken::class,

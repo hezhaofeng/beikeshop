@@ -17,7 +17,6 @@ class Bootstrap
         $this->registerPaymentPageData();
         $this->registerStateMachinePaymentRecord();
         $this->registerAdminViews();
-        $this->registerGuestOrderLookupEntry();
     }
 
     /**
@@ -173,17 +172,4 @@ class Bootstrap
         });
     }
 
-    /**
-     * 在未登录用户的账户菜单中提供订单查询入口。
-     */
-    private function registerGuestOrderLookupEntry(): void
-    {
-        add_hook_blade('header.menu.icon', function ($callback, $output, $data) {
-            return $output . view('OfflineTransfer::shop.order_lookup_entry')->render();
-        });
-
-        add_hook_blade('header.menu.mobile.after', function ($callback, $output, $data) {
-            return $output . view('OfflineTransfer::shop.order_lookup_mobile_entry')->render();
-        });
-    }
 }

@@ -252,19 +252,22 @@ class ProductRepo
 
         $keyword = trim($filters['keyword'] ?? '');
         if ($keyword) {
-            $keywords = explode(' ', $keyword);
-            $keywords = array_unique($keywords);
-            $keywords = array_diff($keywords, ['']);
+            $keywords = array_values(array_unique(array_filter(explode(' ', $keyword), static fn ($item) => $item !== '')));
             $builder->where(function (Builder $query) use ($keywords, $likeOperator) {
                 $query->whereHas('skus', function (Builder $query) use ($keywords, $likeOperator) {
-                    $keywordFirst = array_shift($keywords);
-                    $query->where('sku', $likeOperator, "%{$keywordFirst}%")
-                        ->orWhere('model', $likeOperator, "%{$keywordFirst}%");
-
-                    foreach ($keywords as $keyword) {
-                        $query->orWhere('sku', $likeOperator, "%{$keyword}%")
-                            ->orWhere('model', $likeOperator, "%{$keyword}%");
+                    $query->where('product_skus.active', true);
+                    if (self::isPublicCatalog()) {
+                        app(SkuMappingService::class)->constrainToPublishedPublicSkus($query);
                     }
+                    $query->where(function (Builder $query) use ($keywords, $likeOperator): void {
+                        foreach ($keywords as $index => $keyword) {
+                            $method = $index === array_key_first($keywords) ? 'where' : 'orWhere';
+                            $query->{$method}(function (Builder $query) use ($keyword, $likeOperator): void {
+                                $query->where('product_skus.sku', $likeOperator, "%{$keyword}%")
+                                    ->orWhere('product_skus.model', $likeOperator, "%{$keyword}%");
+                            });
+                        }
+                    });
                 });
                 foreach ($keywords as $keyword) {
                     $query->orWhere('pd.name', $likeOperator, "%{$keyword}%");
@@ -289,8 +292,11 @@ class ProductRepo
             $builder->onlyTrashed();
         }
 
-        $sort  = $filters['sort']  ?? 'products.created_at';
-        $order = $filters['order'] ?? 'desc';
+        $sort  = $filters['sort'] ?? 'products.created_at';
+        $order = strtolower((string) ($filters['order'] ?? 'desc'));
+        if (! in_array($order, ['asc', 'desc'], true)) {
+            $order = 'desc';
+        }
 
         if ($sort == 'product_skus.price') {
             $builder->join('product_skus', function ($query) {
@@ -422,16 +428,62 @@ class ProductRepo
 
     public static function autocomplete($name, $limit = 50)
     {
-        $likeOperator = self::getLikeOperator();
-        $products     = Product::query()->with('description')->where('active', 1)
-            ->whereHas('description', function ($query) use ($name, $likeOperator) {
-                $query->where('name', $likeOperator, "%{$name}%");
+        $keyword       = trim((string) $name);
+        if ($keyword === '') {
+            return [];
+        }
+
+        $limit         = max(1, min((int) ($limit ?: 50), 50));
+        $likeOperator  = self::getLikeOperator();
+        $publicCatalog = self::isPublicCatalog();
+        $mappings      = $publicCatalog ? app(SkuMappingService::class) : null;
+        // Eloquent 预加载约束接收 HasOne 关系对象，而不是 Eloquent Builder。
+        $withMasterSku = function ($query) use ($mappings): void {
+            if ($mappings) {
+                $mappings->constrainToPublishedPublicSkus($query);
+            }
+        };
+        $searchSkus    = function (Builder $query) use ($keyword, $likeOperator, $mappings): void {
+            $query->where('product_skus.active', true)
+                ->where(function (Builder $query) use ($keyword, $likeOperator): void {
+                    $query->where('product_skus.sku', $likeOperator, "%{$keyword}%")
+                        ->orWhere('product_skus.model', $likeOperator, "%{$keyword}%");
+                });
+
+            if ($mappings) {
+                $mappings->constrainToPublishedPublicSkus($query);
+            }
+        };
+        $products = Product::query()->with([
+            'description',
+            'masterSku' => $withMasterSku,
+        ])->where('active', 1)
+            ->whereHas('masterSku', $withMasterSku)
+            ->where(function (Builder $query) use ($keyword, $likeOperator, $searchSkus): void {
+                $query->whereHas('description', function (Builder $query) use ($keyword, $likeOperator): void {
+                    $query->where('name', $likeOperator, "%{$keyword}%");
+                })->orWhereHas('skus', $searchSkus);
             });
-        if (self::isPublicCatalog()) {
-            $mappings = app(SkuMappingService::class);
+
+        if ($publicCatalog) {
             $products->whereHas('skus', fn (Builder $query) => $mappings->constrainToPublishedPublicSkus($query));
         }
-        $products = $products->orderByDesc('created_at')->limit($limit)->get();
+
+        // 完全匹配 SKU 的商品必须排在联想结果前面，避免被创建时间排序淹没。
+        $exactSku = ProductSku::query()
+            ->selectRaw('1')
+            ->whereColumn('product_skus.product_id', 'products.id')
+            ->where('product_skus.active', true)
+            ->where('product_skus.sku', $likeOperator, $keyword);
+        if ($mappings) {
+            $mappings->constrainToPublishedPublicSkus($exactSku);
+        }
+
+        $products = $products
+            ->orderByRaw("CASE WHEN EXISTS ({$exactSku->toSql()}) THEN 0 ELSE 1 END", $exactSku->getBindings())
+            ->orderByDesc('created_at')
+            ->limit($limit)
+            ->get();
 
         return \Beike\Shop\Http\Resources\ProductSimple::collection($products)->jsonSerialize();
     }
