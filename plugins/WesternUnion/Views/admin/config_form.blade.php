@@ -1,7 +1,6 @@
 @php
   $setting = $plugin->getSetting() ?: [];
   $status = old('status', (int) ($setting['status'] ?? 0));
-  $receiptRequired = old('receipt_required', (int) ($setting['receipt_required'] ?? 1));
   $quantityRestrictionEnabled = old('quantity_restriction_enabled', (int) ($setting['quantity_restriction_enabled'] ?? 0));
 @endphp
 
@@ -31,15 +30,6 @@
         value="{{ old('discount_percentage', $setting['discount_percentage'] ?? 8) }}">
         <div class="form-text text-secondary">{{ __('WesternUnion::common.discount_percentage_help') }}</div>
       </x-admin-form-input>
-      <x-admin-form-select
-        name="receipt_required"
-        title="{{ __('WesternUnion::common.receipt_required') }}"
-        :options="[
-          ['value' => '1', 'label' => __('WesternUnion::common.yes')],
-          ['value' => '0', 'label' => __('WesternUnion::common.no')],
-        ]"
-        value="{{ $receiptRequired }}" />
-
       <x-admin-form-select
         name="quantity_restriction_enabled"
         title="按商品件数限制支付方式"

@@ -20,17 +20,6 @@ return [
         'rules'     => 'nullable|numeric|min:0|max:100',
     ],
     [
-        'name'      => 'receipt_required',
-        'label_key' => 'common.receipt_required',
-        'type'      => 'select',
-        'options'   => [
-            ['value' => '1', 'label_key' => 'common.yes'],
-            ['value' => '0', 'label_key' => 'common.no'],
-        ],
-        'required' => true,
-        'rules'    => 'required|boolean',
-    ],
-    [
         'name'      => 'quantity_restriction_enabled',
         'label'     => '按商品件数限制支付方式',
         'type'      => 'select',

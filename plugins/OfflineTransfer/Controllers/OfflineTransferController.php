@@ -193,20 +193,12 @@ class OfflineTransferController
     }
 
     /**
-     * 凭证强制开关由当前插件设置决定，申报至少应包含交易号或凭证。
+     * 凭证选填，申报至少应包含交易号、新上传或已有的凭证。
      */
     private function validateDeclaration(array $data, bool $hasExistingReceipt = false): void
     {
-        $setting         = plugin_setting(OfflineTransferPaymentService::CODE, []);
-        $receiptRequired = OfflineTransferPaymentService::requiresReceipt($setting['receipt_required'] ?? true);
-        $hasReceipt      = isset($data['receipt']);
-        $transactionId   = trim((string) ($data['transaction_id'] ?? ''));
-
-        if ($receiptRequired && ! $hasReceipt && ! $hasExistingReceipt) {
-            throw ValidationException::withMessages([
-                'receipt' => trans('OfflineTransfer::common.receipt_required_error'),
-            ]);
-        }
+        $hasReceipt    = isset($data['receipt']);
+        $transactionId = trim((string) ($data['transaction_id'] ?? ''));
 
         if (! $hasReceipt && ! $hasExistingReceipt && $transactionId === '') {
             throw ValidationException::withMessages([

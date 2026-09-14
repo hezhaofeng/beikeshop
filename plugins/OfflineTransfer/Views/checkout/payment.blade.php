@@ -40,7 +40,7 @@
       </div>
       <div class="mb-3">
         <label class="form-label" for="offline-transfer-receipt">{{ __('OfflineTransfer::common.receipt') }}</label>
-        <input id="offline-transfer-receipt" class="form-control" type="file" name="receipt" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" @if ($offline_transfer_instruction['receipt_required']) required @endif>
+        <input id="offline-transfer-receipt" class="form-control" type="file" name="receipt" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf">
         <div class="form-text">{{ __('OfflineTransfer::common.receipt_help') }}</div>
       </div>
       <div class="mb-3">

@@ -41,7 +41,7 @@ class WesternUnionPaymentService extends PaymentService
 
         return [
             'transfer_instruction' => $transferInstruction,
-            'receipt_required'     => self::requiresReceipt($setting['receipt_required'] ?? true),
+            'receipt_required'     => false,
             'amount'               => self::formatAmount($this->order->total),
             'currency'             => (string) $this->order->currency_code,
             'order_number'         => $this->order->number,

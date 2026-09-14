@@ -26,7 +26,7 @@ class OfflineTransferPaymentServiceTest extends TestCase
         ]);
 
         $this->assertSame("收款人：测试商户\n账号：123456", $instruction['transfer_instruction']);
-        $this->assertTrue($instruction['receipt_required']);
+        $this->assertFalse($instruction['receipt_required']);
         $this->assertSame('18.70', $instruction['amount']);
         $this->assertSame('EUR', $instruction['currency']);
         $this->assertSame('OFFLINE-1001', $instruction['order_number']);

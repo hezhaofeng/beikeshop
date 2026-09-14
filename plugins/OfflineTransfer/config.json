@@ -5,8 +5,8 @@
         "en": "Offline Transfer"
     },
     "description": {
-        "zh_cn": "买家按转账说明付款并上传凭证，由后台核验到账后确认支付。",
-        "en": "Customers follow transfer instructions and upload a receipt. Administrators verify the payment before it is confirmed."
+        "zh_cn": "买家按转账说明付款并提交付款信息，凭证选填，由后台核验到账后确认支付。",
+        "en": "Customers follow transfer instructions and submit payment details with an optional receipt. Administrators verify the payment before it is confirmed."
     },
     "type": "payment",
     "version": "v1.0.0",

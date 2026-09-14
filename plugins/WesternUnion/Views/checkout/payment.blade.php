@@ -40,7 +40,7 @@
       </div>
       <div class="mb-3">
         <label class="form-label" for="western-union-receipt">{{ __('WesternUnion::common.receipt') }}</label>
-        <input id="western-union-receipt" class="form-control" type="file" name="receipt" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf" @if ($western_union_instruction['receipt_required']) required @endif>
+        <input id="western-union-receipt" class="form-control" type="file" name="receipt" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf">
         <div class="form-text">{{ __('WesternUnion::common.receipt_help') }}</div>
       </div>
       <div class="mb-3">
