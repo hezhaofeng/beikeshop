@@ -1,0 +1,10 @@
+{
+    "code": "top_notice",
+    "name": {"zh_cn": "顶部公告", "zh_hk": "頂部公告", "en": "Top Notice"},
+    "description": {"zh_cn": "可配置的单行顶部公告，支持多语言、定时展示和超长滚动。", "en": "Configurable single-line header notice with translations, scheduling and scrolling."},
+    "type": "feature",
+    "version": "v1.0.0",
+    "local_development": true,
+    "icon": "/image/logo.png",
+    "author": {"name": "BeikeShop", "email": "service@beikeshop.com"}
+}
