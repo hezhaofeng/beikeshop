@@ -39,6 +39,40 @@ final class PaypalAMoney
         return hash_equals(self::normalize($first, $currency), self::normalize($second, $currency));
     }
 
+    public static function scale(string $currency): int
+    {
+        return in_array(strtoupper(trim($currency)), self::ZERO_DECIMAL_CURRENCIES, true) ? 0 : 2;
+    }
+
+    /**
+     * 将 PayPal 币种金额转换为最小货币单位，避免金额核对使用浮点数。
+     */
+    public static function toMinor(mixed $amount, string $currency, string $field = 'amount'): int
+    {
+        $normalized           = self::normalize($amount, $currency, $field);
+        $scale                = self::scale($currency);
+        [$integer, $fraction] = array_pad(explode('.', $normalized, 2), 2, '');
+
+        return ((int) $integer * (10 ** $scale))
+            + (int) str_pad(substr($fraction, 0, $scale), $scale, '0');
+    }
+
+    public static function fromMinor(int $minor, string $currency): string
+    {
+        $scale = self::scale($currency);
+        if ($scale === 0) {
+            return (string) $minor;
+        }
+
+        if ($minor < 0) {
+            return '-' . self::fromMinor(abs($minor), $currency);
+        }
+
+        $base = 10 ** $scale;
+
+        return intdiv($minor, $base) . '.' . str_pad((string) ($minor % $base), $scale, '0', STR_PAD_LEFT);
+    }
+
     private static function invalid(string $field, string $message): never
     {
         throw ValidationException::withMessages([$field => $message]);
