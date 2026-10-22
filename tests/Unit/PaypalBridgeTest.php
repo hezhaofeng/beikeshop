@@ -636,7 +636,7 @@ class PaypalBridgeTest extends TestCase
 
     public function test_completed_payment_for_cancelled_order_is_still_audited(): void
     {
-        $controller = file_get_contents('plugins/PaypalA/Controllers/PaypalAController.php');
+        $controller = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalA/Controllers/PaypalAController.php'));
 
         $this->assertStringContainsString('use Beike\\Repositories\\OrderPaymentRepo;', $controller);
         $this->assertStringContainsString('elseif ($order->status === StateMachineService::CANCELLED)', $controller);
@@ -650,7 +650,7 @@ class PaypalBridgeTest extends TestCase
 
         $this->assertStringContainsString('use Symfony\\Component\\HttpKernel\\Exception\\HttpExceptionInterface;', $controller);
         $this->assertStringContainsString('catch (HttpExceptionInterface $exception)', $controller);
-        $this->assertStringContainsString('->withErrors($exception->errors())', $controller);
+        $this->assertStringContainsString('->withErrors($buyerErrors)', $controller);
         $this->assertStringContainsString("->withErrors(trans('PaypalA::common.start_failed'))", $controller);
         $this->assertStringContainsString('report($exception);', $controller);
         $this->assertStringNotContainsString('effectiveUri()?->toString()', $client);
@@ -1120,8 +1120,8 @@ class PaypalBridgeTest extends TestCase
         $this->assertSame('detailed', PaypalBOrderPayload::modeFor($fresh, ['paypal_payload_mode' => 'bogus']));
 
         $service = file_get_contents('plugins/PaypalB/Services/PaypalBTransactionService.php');
-        $refunds = file_get_contents('plugins/PaypalB/Services/PaypalBRefundService.php');
-        $client  = file_get_contents('plugins/PaypalB/Services/PaypalBApiClient.php');
+        $refunds = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalB/Services/PaypalBRefundService.php'));
+        $client  = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalB/Services/PaypalBApiClient.php'));
         $columns = file_get_contents('plugins/PaypalB/columns.php');
         $form    = file_get_contents('plugins/PaypalB/Views/admin/config_form.blade.php');
 
@@ -1181,7 +1181,7 @@ class PaypalBridgeTest extends TestCase
         $transaction->forceFill(['status' => 'pending', 'paypal_capture_id' => null]);
         $this->assertFalse($transaction->hasPendingCapture());
 
-        $service = file_get_contents('plugins/PaypalB/Services/PaypalBTransactionService.php');
+        $service = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalB/Services/PaypalBTransactionService.php'));
         // 捕获返回 PENDING 时记录捕获号，之后不再重复捕获，只查询原订单的最新结果。
         $this->assertStringContainsString('private function markCapturePending(', $service);
         $this->assertStringContainsString("'payment_exception_status'  => 'capture_pending'", $service);
@@ -1213,15 +1213,15 @@ class PaypalBridgeTest extends TestCase
 
     public function test_buyers_are_told_not_to_pay_again_while_paypal_confirms_the_capture(): void
     {
-        $bController  = file_get_contents('plugins/PaypalB/Controllers/PaypalBController.php');
-        $bModel       = file_get_contents('plugins/PaypalB/Models/PaypalBTransaction.php');
-        $bBootstrap   = file_get_contents('plugins/PaypalB/Bootstrap.php');
-        $localPayment = file_get_contents('plugins/PaypalB/Services/PaypalBLocalPaymentService.php');
-        $partial      = file_get_contents('plugins/PaypalB/Views/checkout/partials/wallet_buttons.blade.php');
-        $card         = file_get_contents('plugins/PaypalB/Views/checkout/card.blade.php');
-        $aController  = file_get_contents('plugins/PaypalA/Controllers/PaypalAController.php');
-        $aService     = file_get_contents('plugins/PaypalA/Services/PaypalAPaymentService.php');
-        $aTemplate    = file_get_contents('plugins/PaypalA/Views/checkout/payment.blade.php');
+        $bController  = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalB/Controllers/PaypalBController.php'));
+        $bModel       = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalB/Models/PaypalBTransaction.php'));
+        $bBootstrap   = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalB/Bootstrap.php'));
+        $localPayment = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalB/Services/PaypalBLocalPaymentService.php'));
+        $partial      = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalB/Views/checkout/partials/wallet_buttons.blade.php'));
+        $card         = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalB/Views/checkout/card.blade.php'));
+        $aController  = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalA/Controllers/PaypalAController.php'));
+        $aService     = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalA/Services/PaypalAPaymentService.php'));
+        $aTemplate    = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalA/Views/checkout/payment.blade.php'));
 
         // B 站结账页与本地支付页：已捕获待确认时不再渲染按钮。
         $this->assertStringContainsString("trans('PaypalB::common.session_capture_pending')", $bController);
@@ -1463,7 +1463,7 @@ class PaypalBridgeTest extends TestCase
 
     public function test_mirror_orders_can_be_created_at_session_time_with_catalog_products_and_price_adjustment(): void
     {
-        $service   = file_get_contents('plugins/PaypalB/Services/PaypalBShopOrderService.php');
+        $service   = $this->normalizeSourceLineEndings(file_get_contents('plugins/PaypalB/Services/PaypalBShopOrderService.php'));
         $txService = file_get_contents('plugins/PaypalB/Services/PaypalBTransactionService.php');
         $bootstrap = file_get_contents('plugins/PaypalB/Bootstrap.php');
         $model     = file_get_contents('plugins/PaypalB/Models/PaypalBTransaction.php');
@@ -1492,5 +1492,10 @@ class PaypalBridgeTest extends TestCase
         $this->assertStringContainsString("\$removed[] = 'subStock';", $bootstrap);
         $this->assertStringContainsString('--with-adjustment', $backfill);
         $this->assertStringContainsString('RISK_FLAG_UNMAPPED, (array) $transaction->risk_flags', $list);
+    }
+
+    private function normalizeSourceLineEndings(string $contents): string
+    {
+        return str_replace(["\r\n", "\r"], "\n", $contents);
     }
 }
