@@ -10,6 +10,9 @@ $register = function (): void {
     Route::get('terms', [PaypalBController::class, 'terms'])->name('terms');
 
     Route::get('checkout/{token}', [PaypalBController::class, 'checkout'])->name('checkout');
+    Route::get('local-return/{token}', [PaypalBController::class, 'localReturn'])
+        ->middleware('throttle:60,1')
+        ->name('local_return');
     Route::post('checkout/{token}/capture', [PaypalBController::class, 'captureCheckout'])
         ->withoutMiddleware(\App\Http\Middleware\VerifyCsrfToken::class)
         ->middleware('throttle:30,1')

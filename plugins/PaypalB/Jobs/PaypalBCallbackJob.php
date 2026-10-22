@@ -35,7 +35,8 @@ class PaypalBCallbackJob implements ShouldQueue
     public function handle(PaypalBCallbackService $callbacks): void
     {
         $transaction = PaypalBTransaction::query()->find($this->transactionId);
-        if (! $transaction || ! in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired'], true)) {
+        if (! $transaction
+            || (! in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired'], true) && ! $transaction->hasPendingCapture())) {
             return;
         }
 

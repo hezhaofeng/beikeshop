@@ -27,6 +27,10 @@ class Kernel extends ConsoleKernel
         $paypalB = plugin('paypal_b');
         if ($paypalB && $paypalB->getEnabled()) {
             $schedule->command('paypal-b:dispatch-callbacks')->everyMinute();
+            // 审核、电子支票等待确认的收款靠 Webhook 推进；Webhook 丢失时由此兜底，单条最长 30 秒。
+            $schedule->command('paypal-b:sync-pending-captures')
+                ->everyThirtyMinutes()
+                ->withoutOverlapping();
         }
 
         $paypalA = plugin('paypal_a');

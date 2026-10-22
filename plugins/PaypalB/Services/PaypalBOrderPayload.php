@@ -7,12 +7,28 @@ use Plugin\PaypalB\Models\PaypalBTransaction;
 
 final class PaypalBOrderPayload
 {
+    /**
+     * PaypalB 默认格式：订单号、支付引用、商品行、金额拆分、收货地址与收款主体名称全部提交。
+     */
+    public const MODE_DETAILED = 'detailed';
+
+    /**
+     * 兼容模式：只提交订单号、金额和商品名称，不提交商城收货地址；实物订单由买家在 PayPal 页面自选地址。
+     */
+    public const MODE_NATIVE = 'native';
+
+    private const DESCRIPTION_LIMIT = 127;
+
+    /**
+     * @param array{mode?: string} $options
+     */
     public static function build(
         PaypalBTransaction $transaction,
         string $returnUrl,
         string $cancelUrl,
         string $brandName,
-        array $orderItems = null
+        array $orderItems = null,
+        array $options = []
     ): array {
         return self::buildFromData([
             'reference'        => (string) $transaction->reference,
@@ -22,25 +38,21 @@ final class PaypalBOrderPayload
             'order_items'      => $orderItems ?? (array) $transaction->order_items,
             'order_totals'     => (array) $transaction->order_totals,
             'shipping_address' => (array) $transaction->shipping_address,
-        ], $returnUrl, $cancelUrl, $brandName);
+        ], $returnUrl, $cancelUrl, $brandName, $options);
     }
 
-    public static function buildFromData(array $data, string $returnUrl, string $cancelUrl, string $brandName): array
+    /**
+     * @param array{mode?: string} $options
+     */
+    public static function buildFromData(array $data, string $returnUrl, string $cancelUrl, string $brandName, array $options = []): array
     {
-        $currency     = strtoupper((string) $data['currency']);
-        $shipping     = (array) $data['shipping_address'];
-        $required     = ! empty($shipping['required']);
-        $purchaseUnit = [
-            'reference_id' => (string) $data['reference'],
-            'invoice_id'   => (string) $data['reference'],
-            'custom_id'    => self::limit((string) $data['order_number'], 127),
-            'description'  => self::description((array) $data['order_items']),
-            'amount'       => [
-                'currency_code' => $currency,
-                'value'         => PaypalBMoney::normalize($data['amount'], $currency),
-            ],
-        ];
+        $mode     = self::normalizeMode($options['mode'] ?? self::MODE_DETAILED);
+        $currency = strtoupper((string) $data['currency']);
+        $shipping = (array) $data['shipping_address'];
+        $required = ! empty($shipping['required']);
+        $amount   = PaypalBMoney::normalize($data['amount'], $currency);
 
+        // 两种格式都先核对商品行、费用与总额：兼容模式虽不提交明细，收款金额同样必须与订单一致。
         $itemData = self::itemsAndBreakdown(
             (array) $data['order_items'],
             (array) $data['order_totals'],
@@ -48,8 +60,45 @@ final class PaypalBOrderPayload
             $currency,
             $required
         );
-        $purchaseUnit['items']               = $itemData['items'];
-        $purchaseUnit['amount']['breakdown'] = $itemData['breakdown'];
+
+        if ($mode === self::MODE_NATIVE) {
+            $orderNumber = self::limit((string) $data['order_number'], 127);
+
+            return [
+                'intent'         => 'CAPTURE',
+                'purchase_units' => [[
+                    // 订单号放在发票编号里，PayPal 交易详情和买家账单都能看到；custom_id 供报表与 API 对账。
+                    'invoice_id'  => $orderNumber,
+                    'custom_id'   => $orderNumber,
+                    'description' => self::description((array) $data['order_items']),
+                    'amount'      => [
+                        'currency_code' => $currency,
+                        'value'         => $amount,
+                    ],
+                ]],
+                'application_context' => [
+                    // 不提交商城地址：实物订单让买家在 PayPal 从自己的地址簿选择，PayPal 会把所选地址记在交易上，
+                    // 卖家保障按该地址发货才有效；虚拟订单不需要地址。
+                    'shipping_preference' => $required ? 'GET_FROM_FILE' : 'NO_SHIPPING',
+                    // 回跳地址只用于浏览器不支持弹窗时的整页跳转回退，PayPal 页面与交易详情不会展示。
+                    'return_url'          => $returnUrl,
+                    'cancel_url'          => $cancelUrl,
+                ],
+            ];
+        }
+
+        $purchaseUnit = [
+            'reference_id' => (string) $data['reference'],
+            'invoice_id'   => (string) $data['reference'],
+            'custom_id'    => self::limit((string) $data['order_number'], 127),
+            'description'  => self::description((array) $data['order_items']),
+            'amount'       => [
+                'currency_code' => $currency,
+                'value'         => $amount,
+                'breakdown'     => $itemData['breakdown'],
+            ],
+            'items' => $itemData['items'],
+        ];
 
         if ($required) {
             $purchaseUnit['shipping'] = [
@@ -76,6 +125,22 @@ final class PaypalBOrderPayload
                 'cancel_url'          => $cancelUrl,
             ],
         ];
+    }
+
+    /**
+     * 会话创建时记录的格式优先于当前配置：同账号重试沿用同一个 PayPal-Request-Id，
+     * 请求体不能因为管理员中途切换开关而改变。
+     */
+    public static function modeFor(PaypalBTransaction $transaction, array $configuration): string
+    {
+        $stored = trim((string) data_get($transaction->bridge_request, 'paypal_payload_mode', ''));
+
+        return self::normalizeMode($stored !== '' ? $stored : ($configuration['paypal_payload_mode'] ?? self::MODE_DETAILED));
+    }
+
+    public static function normalizeMode(mixed $mode): string
+    {
+        return strtolower(trim((string) $mode)) === self::MODE_NATIVE ? self::MODE_NATIVE : self::MODE_DETAILED;
     }
 
     private static function itemsAndBreakdown(array $items, array $totals, string $amount, string $currency, bool $physical): array
@@ -121,13 +186,13 @@ final class PaypalBOrderPayload
             ];
         }
 
-        $shipping     = 0;
-        $tax          = 0;
-        $handling     = 0;
-        $discount     = 0;
-        $subTotal     = null;
-        $orderTotal   = null;
-        $adjustments  = 0;
+        $shipping    = 0;
+        $tax         = 0;
+        $handling    = 0;
+        $discount    = 0;
+        $subTotal    = null;
+        $orderTotal  = null;
+        $adjustments = 0;
         foreach ($totals as $index => $total) {
             if (! is_array($total)) {
                 self::invalid("order_totals.{$index}", 'PayPal 订单金额明细格式无效。');
@@ -196,7 +261,7 @@ final class PaypalBOrderPayload
             $items
         )));
 
-        return self::limit(implode('; ', $names) ?: 'Order payment', 127);
+        return self::limit(implode('; ', $names) ?: 'Order payment', self::DESCRIPTION_LIMIT);
     }
 
     private static function money(int $minor, string $currency): array

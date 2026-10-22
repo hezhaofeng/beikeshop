@@ -25,9 +25,19 @@ return [
     'gateway_unreadable'   => 'The PayPal payment status is temporarily unavailable. Please try again shortly.',
 
     // Status messages after returning from the payment page
-    'status_cancelled'   => 'The PayPal payment was cancelled. You can pay for this order again.',
-    'status_failed'      => 'The PayPal payment was not completed. You can pay for this order again.',
-    'status_expired'     => 'The payment session has expired. Please start the payment again.',
-    'status_reconciling' => 'The PayPal result is still being confirmed. Please do not pay again; try once more in a moment.',
-    'status_pending'     => 'The payment is not complete yet. Please finish the payment and come back.',
+    'status_cancelled'       => 'The PayPal payment was cancelled. You can pay for this order again.',
+    'status_failed'          => 'The PayPal payment was not completed. You can pay for this order again.',
+    'status_expired'         => 'The payment session has expired. Please start the payment again.',
+    'status_reconciling'     => 'The PayPal result is still being confirmed. Please do not pay again; try once more in a moment.',
+    'status_pending'         => 'The payment is not complete yet. Please finish the payment and come back.',
+    'status_capture_pending' => 'PayPal has accepted your payment and is still confirming it. Please do not pay again; the order will update automatically once PayPal completes the review.',
+    'capture_pending_notice' => 'PayPal has accepted your payment and is confirming it. Please do not pay again; this page will show the paid status automatically once PayPal completes the review.',
+
+    // Embedded checkout
+    'embedded_loading'       => 'Loading PayPal…',
+    'embedded_unavailable'   => 'PayPal is temporarily unavailable. Please try again shortly or choose another payment method.',
+    'embedded_not_allowed'   => 'The embedded PayPal checkout is not enabled on the payment gateway. Please contact the merchant.',
+    'embedded_retry'         => 'Retry',
+    'embedded_redirecting'   => 'Redirecting to the secure PayPal page…',
+    'embedded_confirming'    => 'Confirming your payment…',
 ];

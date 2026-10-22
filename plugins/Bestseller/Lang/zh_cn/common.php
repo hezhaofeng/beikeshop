@@ -12,5 +12,6 @@
 
 return [
     'module_name'            => '热卖模块',
+    'latest_products_module_name' => '最新商品模块',
     'limit'                  => '数量限制',
 ];

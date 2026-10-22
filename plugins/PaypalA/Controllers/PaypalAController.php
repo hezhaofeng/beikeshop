@@ -25,10 +25,15 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 class PaypalAController
 {
     /**
-     * A 站创建一次性会话后顶层跳转 B 站，由 B 站承担完整支付页面和收款责任。
+     * A 站创建一次性会话后交给 B 站承担完整支付页面和收款责任。
+     *
+     * 表单提交：302 顶层跳转 B 站托管页（redirect 模式，历史行为）。
+     * JSON 请求：返回 checkout_url 与会话实际的呈现方式，由支付页决定是内嵌 iframe 还是顶层跳转。
      */
-    public function start(Request $request, string $number): RedirectResponse|View
+    public function start(Request $request, string $number): RedirectResponse|JsonResponse|View
     {
+        $wantsJson = $request->expectsJson();
+
         try {
             $order         = $this->resolveShopOrder($request, $number);
             $configuration = PaypalAPaymentService::bridgeConfiguration(plugin_setting(PaypalAPaymentService::CODE, []));
@@ -36,6 +41,12 @@ class PaypalAController
             PaypalAPaymentService::assertPaymentMethodEnabled($method, $configuration);
             PaypalAPaymentService::assertPayableOrder($order);
             $transaction = $this->reserveTransaction($order, $configuration['payment_expiration_minutes'], $method);
+            if (PaypalAPaymentService::hasPendingCapture($transaction)) {
+                // 买家已在 PayPal 付过款、只等 PayPal 确认：再跳转只会制造第二笔付款。
+                throw ValidationException::withMessages([
+                    'payment' => trans('PaypalA::common.status_capture_pending'),
+                ]);
+            }
 
             $gateway = new PaypalABridgeClient($configuration);
             // 复用本地缓存的 B 站响应时不会重新询问 B 站，排查终态问题必须区分这两条来源。
@@ -44,7 +55,7 @@ class PaypalAController
                 && ! empty($transaction->b_response['checkout_url']);
             $response = $reusedResponse
                 ? $transaction->b_response
-                : $gateway->createSession($transaction, $order);
+                : $this->createBridgeSession($gateway, $transaction, $order, $configuration, $number);
 
             $transaction = DB::transaction(function () use ($transaction, $response): PaypalATransaction {
                 $locked = PaypalATransaction::query()->lockForUpdate()->findOrFail($transaction->id);
@@ -106,10 +117,20 @@ class PaypalAController
                 ]);
             }
 
-            $response = redirect()->away($this->checkoutUrlWithMethod($checkoutUrl, $method));
-            $response->headers->set('Referrer-Policy', 'no-referrer');
+            $checkoutUrl = $this->checkoutUrlWithMethod($checkoutUrl, $method);
+            if ($wantsJson) {
+                // 呈现方式以 B 站落库的会话为准：会话若是按 redirect 建的，即使 A 站现在配置为内嵌也不能内嵌。
+                return response()->json([
+                    'checkout_url' => $checkoutUrl,
+                    'presentation' => $this->sessionPresentation($transaction),
+                    'reference'    => (string) $transaction->reference,
+                ]);
+            }
 
-            return $response;
+            $redirect = redirect()->away($checkoutUrl);
+            $redirect->headers->set('Referrer-Policy', 'no-referrer');
+
+            return $redirect;
         } catch (HttpExceptionInterface $exception) {
             throw $exception;
         } catch (ValidationException $exception) {
@@ -117,15 +138,175 @@ class PaypalAController
                 'order_number' => $number,
                 'errors'       => $exception->errors(),
             ]);
+            $buyerErrors = $this->buyerErrors($exception);
+            if ($wantsJson) {
+                return response()->json(['message' => $this->firstError($buyerErrors)], 422);
+            }
 
             return redirect(shop_route('orders.pay', ['number' => $number], false))
-                ->withErrors($exception->errors());
+                ->withErrors($buyerErrors);
         } catch (\Throwable $exception) {
             report($exception);
+            if ($wantsJson) {
+                return response()->json(['message' => trans('PaypalA::common.start_failed')], 500);
+            }
 
             return redirect(shop_route('orders.pay', ['number' => $number], false))
                 ->withErrors(trans('PaypalA::common.start_failed'));
         }
+    }
+
+    /**
+     * 内嵌模式先请求 B 站按 embedded 建会话；B 站明确拒绝内嵌且允许降级时，改按 redirect 重建。
+     * B 站在拒绝前不会落任何记录，同一 reference 重试是安全的。
+     */
+    private function createBridgeSession(PaypalABridgeClient $gateway, PaypalATransaction $transaction, Order $order, array $configuration, string $number): array
+    {
+        $presentation = (string) $configuration['checkout_mode'];
+        if ($presentation !== PaypalAPaymentService::CHECKOUT_MODE_EMBEDDED) {
+            return $gateway->createSession($transaction, $order, PaypalAPaymentService::CHECKOUT_MODE_REDIRECT);
+        }
+
+        try {
+            $response = $gateway->createSession($transaction, $order, PaypalAPaymentService::CHECKOUT_MODE_EMBEDDED);
+        } catch (ValidationException $exception) {
+            $rejected = in_array(PaypalABridgeClient::EMBEDDED_NOT_ALLOWED, (array) ($exception->errors()['presentation'] ?? []), true);
+            if (! $rejected) {
+                throw $exception;
+            }
+            if (! $configuration['embedded_fallback']) {
+                throw ValidationException::withMessages(['payment' => trans('PaypalA::common.embedded_not_allowed')]);
+            }
+            $this->recordEmbeddedFallback($number, 'b_site_rejected');
+
+            return $gateway->createSession($transaction, $order, PaypalAPaymentService::CHECKOUT_MODE_REDIRECT);
+        }
+
+        // 旧版 B 站不认识 presentation 字段，会静默按顶层托管建会话；响应里没有回显就绝不能内嵌。
+        if (($response['presentation'] ?? null) !== PaypalAPaymentService::CHECKOUT_MODE_EMBEDDED) {
+            if (! $configuration['embedded_fallback']) {
+                throw ValidationException::withMessages(['payment' => trans('PaypalA::common.embedded_not_allowed')]);
+            }
+            $this->recordEmbeddedFallback($number, 'b_site_legacy');
+            $response['presentation'] = PaypalAPaymentService::CHECKOUT_MODE_REDIRECT;
+        }
+
+        return $response;
+    }
+
+    /**
+     * 支付页在内嵌模式下轮询本站状态；服务端向 B 站签名拉取后再回答，浏览器消息永远只是触发信号。
+     */
+    public function status(Request $request, string $number): JsonResponse
+    {
+        try {
+            $order       = $this->resolveShopOrder($request, $number);
+            $transaction = PaypalATransaction::query()->where('order_id', $order->id)->latest('id')->first();
+            if (! $transaction) {
+                return response()->json(['status' => 'none', 'order_status' => $order->status]);
+            }
+
+            $this->refreshFromBridge($transaction);
+            $transaction->refresh();
+            $order->refresh();
+        } catch (HttpExceptionInterface $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return response()->json([
+                'status'  => 'unknown',
+                'message' => trans('PaypalA::common.result_confirming'),
+            ], 200);
+        }
+
+        $completed = $transaction->status === 'completed' || $order->status !== StateMachineService::UNPAID;
+
+        return response()->json([
+            'status'          => $completed ? 'completed' : $transaction->status,
+            'capture_pending' => PaypalAPaymentService::hasPendingCapture($transaction),
+            'order_status'    => $order->status,
+            'message'         => $completed ? '' : $this->paymentStatusMessage($transaction),
+            'redirect_url'    => $completed
+                ? shop_route('checkout.success', ['order_number' => $order->number], false)
+                : null,
+        ]);
+    }
+
+    /**
+     * 支付页报告一次内嵌失败。只做记录：降级动作本身由浏览器执行，不依赖本接口成功。
+     */
+    public function embeddedFallback(Request $request, string $number): JsonResponse
+    {
+        $this->resolveShopOrder($request, $number);
+        $reason = preg_replace('/[^a-z_]/', '', strtolower((string) $request->input('reason', 'unknown'))) ?: 'unknown';
+        $this->recordEmbeddedFallback($number, mb_substr($reason, 0, 32));
+
+        return response()->json(['recorded' => true]);
+    }
+
+    /**
+     * 降级会掩盖配置错误（例如 B 站填错 A 站地址导致所有买家都被拦截 8 秒后跳走），
+     * 因此每次都写警告日志并累计到后台可见的 24 小时计数。
+     */
+    private function recordEmbeddedFallback(string $number, string $reason): void
+    {
+        Log::warning('PaypalA 内嵌支付降级为顶层跳转。', [
+            'order_number' => $number,
+            'reason'       => $reason,
+        ]);
+
+        try {
+            PaypalAPaymentService::recordEmbeddedFallback($reason);
+        } catch (\Throwable $exception) {
+            report($exception);
+        }
+    }
+
+    private function sessionPresentation(PaypalATransaction $transaction): string
+    {
+        return (string) data_get($transaction->b_response, 'presentation') === PaypalAPaymentService::CHECKOUT_MODE_EMBEDDED
+            ? PaypalAPaymentService::CHECKOUT_MODE_EMBEDDED
+            : PaypalAPaymentService::CHECKOUT_MODE_REDIRECT;
+    }
+
+    private function firstError(array $errors): string
+    {
+        foreach ($errors as $messages) {
+            foreach ((array) $messages as $message) {
+                if (trim((string) $message) !== '') {
+                    return (string) $message;
+                }
+            }
+        }
+
+        return trans('PaypalA::common.start_failed');
+    }
+
+    /**
+     * 买家只能看到本插件语言文件里的提示。配置错误、B 站拒绝原因、映射明细等内部信息
+     * 已写入日志，对买家统一替换为“支付暂时无法发起”。
+     */
+    private function buyerErrors(ValidationException $exception): array
+    {
+        $allowed = [];
+        foreach (array_unique(['zh_cn', 'zh_hk', 'en', app()->getLocale()]) as $locale) {
+            $texts = trans('PaypalA::common', [], $locale);
+            if (is_array($texts)) {
+                $allowed = array_merge($allowed, array_values(array_filter($texts, 'is_string')));
+            }
+        }
+
+        $errors = [];
+        foreach ($exception->errors() as $field => $messages) {
+            foreach ((array) $messages as $message) {
+                $message          = (string) $message;
+                $errors[$field][] = in_array($message, $allowed, true) ? $message : trans('PaypalA::common.start_failed');
+            }
+            $errors[$field] = array_values(array_unique($errors[$field]));
+        }
+
+        return $errors === [] ? ['payment' => [trans('PaypalA::common.start_failed')]] : $errors;
     }
 
     /**
@@ -139,30 +320,45 @@ class PaypalAController
             abort(404);
         }
 
+        $orderNumber = $this->orderNumber($transaction);
+
         try {
-            if ($transaction->b_transaction_id && $transaction->status !== 'completed') {
-                $configuration = PaypalAPaymentService::bridgeConfiguration(plugin_setting(PaypalAPaymentService::CODE, []));
-                $payload       = (new PaypalABridgeClient($configuration))->transactionStatus($transaction);
-                $this->applyBridgeResult($payload, false);
-                $transaction->refresh();
-            }
+            $this->refreshFromBridge($transaction);
+            $transaction->refresh();
         } catch (\Throwable $exception) {
-            return redirect(shop_route('orders.pay', ['number' => $this->orderNumber($transaction)], false))
+            // 状态查询失败不代表付款失败：只提示确认中，等待 B 站签名回调或买家再次回跳。
+            report($exception);
+
+            return redirect(shop_route('orders.pay', ['number' => $orderNumber], false))
                 ->withErrors(trans('PaypalA::common.result_confirming'));
         }
 
         if ($transaction->status === 'completed') {
-            $response = redirect(shop_route('checkout.success', ['order_number' => $this->orderNumber($transaction)], false));
+            $response = redirect(shop_route('checkout.success', ['order_number' => $orderNumber], false));
             $response->headers->set('Referrer-Policy', 'no-referrer');
 
             return $response;
         }
 
-        $response = redirect(shop_route('orders.pay', ['number' => $this->orderNumber($transaction)], false))
-            ->withErrors($this->paymentStatusMessage($transaction->status));
+        $response = redirect(shop_route('orders.pay', ['number' => $orderNumber], false))
+            ->withErrors($this->paymentStatusMessage($transaction));
         $response->headers->set('Referrer-Policy', 'no-referrer');
 
         return $response;
+    }
+
+    /**
+     * 向 B 站拉取一次会话状态并按签名结果推进本地订单；已完成或尚未建成的会话直接跳过。
+     */
+    private function refreshFromBridge(PaypalATransaction $transaction): void
+    {
+        if (! $transaction->b_transaction_id || $transaction->status === 'completed') {
+            return;
+        }
+
+        $configuration = PaypalAPaymentService::bridgeConfiguration(plugin_setting(PaypalAPaymentService::CODE, []));
+        $payload       = (new PaypalABridgeClient($configuration))->transactionStatus($transaction);
+        $this->applyBridgeResult($payload, false);
     }
 
     /**
@@ -209,6 +405,17 @@ class PaypalAController
         return DB::transaction(function () use ($order, $expirationMinutes, $method): PaypalATransaction {
             $lockedOrder = Order::query()->lockForUpdate()->findOrFail($order->id);
             PaypalAPaymentService::assertPayableOrder($lockedOrder);
+
+            // B 站已捕获、PayPal 仍在确认的会话不受有效期约束：买家已付款，此时绝不能再开新会话。
+            $awaiting = PaypalATransaction::query()
+                ->where('order_id', $lockedOrder->id)
+                ->where('status', 'pending')
+                ->latest('id')
+                ->lockForUpdate()
+                ->first();
+            if ($awaiting && PaypalAPaymentService::hasPendingCapture($awaiting)) {
+                return $awaiting;
+            }
 
             $active = PaypalATransaction::query()
                 ->where('order_id', $lockedOrder->id)
@@ -321,7 +528,7 @@ class PaypalAController
                 PaypalAPaymentService::assertPayableOrder($order);
                 StateMachineService::getInstance($order)
                     ->setPayment($paymentAuditData)
-                    ->changeStatus(StateMachineService::PAID, 'PayPal B 站已确认收款。');
+                    ->changeStatus(StateMachineService::PAID, 'PayPal 已确认收款。');
             } elseif ($order->status === StateMachineService::CANCELLED) {
                 // 订单不能自动恢复为已支付，但已到账款项必须写入订单支付审计供后台处理。
                 OrderPaymentRepo::createOrUpdatePayment($order->id, $paymentAuditData);
@@ -333,15 +540,15 @@ class PaypalAController
     {
         if ($order->status === StateMachineService::PAID) {
             StateMachineService::getInstance($order)
-                ->changeStatus(StateMachineService::REFUNDING, 'PayPal B 站已确认全额退款。');
+                ->changeStatus(StateMachineService::REFUNDING, 'PayPal 已确认全额退款。');
             StateMachineService::getInstance($order)
-                ->changeStatus(StateMachineService::CANCELLED, 'PayPal B 站已确认全额退款。');
+                ->changeStatus(StateMachineService::CANCELLED, 'PayPal 已确认全额退款。');
 
             return;
         }
         if ($order->status === StateMachineService::REFUNDING) {
             StateMachineService::getInstance($order)
-                ->changeStatus(StateMachineService::CANCELLED, 'PayPal B 站已确认全额退款。');
+                ->changeStatus(StateMachineService::CANCELLED, 'PayPal 已确认全额退款。');
 
             return;
         }
@@ -526,7 +733,8 @@ class PaypalAController
         return $scheme . '://' . strtolower((string) $parts['host']) . (isset($parts['port']) ? ':' . (int) $parts['port'] : '');
     }
 
-    private function checkoutUrlWithMethod(string $url, string $method): string    {
+    private function checkoutUrlWithMethod(string $url, string $method): string
+    {
         $query = http_build_query([
             'method' => $method,
         ], '', '&', PHP_QUERY_RFC3986);
@@ -534,9 +742,13 @@ class PaypalAController
         return $url . (str_contains($url, '?') ? '&' : '?') . $query;
     }
 
-    private function paymentStatusMessage(string $status): string
+    private function paymentStatusMessage(PaypalATransaction $transaction): string
     {
-        return match ($status) {
+        if (PaypalAPaymentService::hasPendingCapture($transaction)) {
+            return trans('PaypalA::common.status_capture_pending');
+        }
+
+        return match ((string) $transaction->status) {
             'cancelled'   => trans('PaypalA::common.status_cancelled'),
             'failed'      => trans('PaypalA::common.status_failed'),
             'expired'     => trans('PaypalA::common.status_expired'),

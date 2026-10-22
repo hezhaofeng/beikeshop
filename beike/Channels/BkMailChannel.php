@@ -163,8 +163,8 @@ class BkMailChannel extends MailChannel
                 // 获取发件人信息
                 $from               = $message->from     ?? config('mail.from.address');
                 $fromName           = $message->fromName ?? config('mail.from.name');
-                $data['from_email'] = is_array($from) ? $from[0] : $from;
-                $data['from_name']  = is_array($fromName) ? $fromName[0] : $fromName;
+                $data['from_email'] = is_array($from) ? (string) ($from[0] ?? '') : (string) $from;
+                $data['from_name']  = is_array($fromName) ? (string) ($fromName[0] ?? '') : (string) $fromName;
 
                 // 获取主题
                 $data['subject'] = $message->subject ?? '';

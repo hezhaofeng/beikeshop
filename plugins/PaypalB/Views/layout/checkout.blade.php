@@ -10,7 +10,8 @@
           // 主题资源未构建时降级为内置基础样式，支付页不能因为缺少 CSS 而打不开。
       }
   }
-  $logo = system_setting('base.logo');
+  // 支付页不展示任何站点 logo 或名称，与原生 PayPal 插件的支付页保持一致；仅保留网站图标。
+  $favicon = system_setting('base.favicon');
 @endphp
 <!doctype html>
 <html lang="{{ $html_lang ?? str_replace('_', '-', app()->getLocale()) }}">
@@ -19,9 +20,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex, nofollow">
-  <title>@yield('title', $merchant['display_name'] ?? 'PayPal')</title>
-  @if($logo)
-    <link rel="shortcut icon" href="{{ image_origin(system_setting('base.favicon')) }}">
+  <title>@yield('title', 'PayPal')</title>
+  @if($favicon)
+    <link rel="shortcut icon" href="{{ image_origin($favicon) }}">
   @endif
   @foreach($themeCss as $css)
     <link rel="stylesheet" type="text/css" href="{{ $css }}">
@@ -30,9 +31,6 @@
     /* 主题资源缺失时的最小可用排版，主题存在时这些规则会被主题覆盖。 */
     body { margin: 0; background: #f7f8fa; color: #202124; font: 15px/1.5 Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
     .pb-shell { width: min(100%, 720px); margin: 0 auto; padding: 24px 16px 48px; }
-    .pb-brand { display: flex; align-items: center; gap: 10px; justify-content: center; margin-bottom: 20px; }
-    .pb-brand img { max-height: 34px; }
-    .pb-brand-name { font-size: 17px; font-weight: 700; }
     .pb-panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 28px 24px; }
     .pb-foot { margin-top: 20px; text-align: center; font-size: 13px; color: #667085; }
     .pb-foot a { color: #667085; margin: 0 8px; }
@@ -40,25 +38,26 @@
     .paypal-hosted-field { height: calc(1.5em + 1rem + 2px); overflow: hidden; }
     .paypal-hosted-field > iframe { height: 100% !important; }
     @media (min-width: 768px) { .pb-panel { padding: 36px 40px; } }
+    /* 内嵌形态：A 站主题已经画好了卡片、订单号和金额，本页只剩按钮区，背景透明、不留外边距。 */
+    .pb-embedded body { background: transparent; }
+    .pb-embedded .pb-shell { width: 100%; max-width: none; padding: 0; }
+    .pb-embedded .pb-panel { background: transparent; border: 0; border-radius: 0; padding: 0; }
+    .pb-embedded .pb-summary { display: none; }
+    .pb-embedded .pb-foot { margin-top: 12px; }
   </style>
   @stack('head')
 </head>
 <body class="@yield('body-class')">
+  @include('PaypalB::checkout.partials.embed_bridge')
   <div class="pb-shell">
-    <div class="pb-brand">
-      @if($logo)
-        <img src="{{ image_origin($logo) }}" alt="{{ $merchant['display_name'] ?? '' }}">
-      @endif
-      <span class="pb-brand-name">{{ $merchant['display_name'] ?? '' }}</span>
-    </div>
-
     <div class="pb-panel">
       @yield('content')
     </div>
 
     @isset($merchant)
+      {{-- 页脚只保留政策链接（PayPal 合规要求），链接一律新窗口打开，iframe 内打不开被 CSP 拒绝的政策页。 --}}
       <div class="pb-foot">
-        <a href="{{ $merchant['contact_url'] }}" rel="noreferrer">{{ trans('PaypalB::common.contact_us') }}</a>
+        <a href="{{ $merchant['contact_url'] }}" rel="noreferrer" @if(!empty($embedded)) target="_blank" @endif>{{ trans('PaypalB::common.contact_us') }}</a>
         <a href="{{ $merchant['refund_url'] }}" target="_blank" rel="noreferrer noopener">{{ trans('PaypalB::common.refund_policy') }}</a>
         <a href="{{ $merchant['privacy_url'] }}" target="_blank" rel="noreferrer noopener">{{ trans('PaypalB::common.privacy_policy') }}</a>
         <a href="{{ $merchant['terms_url'] }}" target="_blank" rel="noreferrer noopener">{{ trans('PaypalB::common.terms_policy') }}</a>

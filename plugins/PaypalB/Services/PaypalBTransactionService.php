@@ -18,6 +18,11 @@ class PaypalBTransactionService
 
     private const ITEM_SOURCE_A_MAPPING = 'mapped';
 
+    /**
+     * 拒绝内嵌时返回给 A 站的稳定错误码。A 站按字面匹配决定是否降级，文案不可随意改动。
+     */
+    public const EMBEDDED_NOT_ALLOWED = 'embedded_not_allowed';
+
     private const RISK_RATE_LIMIT_WINDOW_MINUTES = 15;
 
     private const RISK_RATE_LIMIT_MAX_ATTEMPTS = 5;
@@ -42,6 +47,15 @@ class PaypalBTransactionService
         } catch (LockTimeoutException) {
             throw ValidationException::withMessages([
                 'payment' => '相同订单的支付会话正在创建，请稍后重试。',
+            ]);
+        }
+    }
+
+    private function assertBridgeEnabled(): void
+    {
+        if (empty($this->configuration['bridge_enabled'])) {
+            throw ValidationException::withMessages([
+                'bridge' => 'PaypalB 当前未启用 A/B 跨站支付。',
             ]);
         }
     }
@@ -89,7 +103,7 @@ class PaypalBTransactionService
                     }
 
                     throw ValidationException::withMessages([
-                        'payment' => 'PayPal 创建结果尚未确认，请在 B 站后台核对后再继续付款。',
+                        'payment' => trans('PaypalB::common.session_reconciling'),
                     ]);
                 }
 
@@ -175,13 +189,7 @@ class PaypalBTransactionService
             }
         }
 
-        $selector = new PaypalBAccountSelector($this->configuration['account_cooldown_minutes']);
-
-        try {
-            $account = $selector->select($data['currency'], $data['allowed_methods']);
-        } catch (\Throwable $exception) {
-            throw ValidationException::withMessages(['payment' => $exception->getMessage()]);
-        }
+        $account = $this->selectAccount($data['currency'], $data['allowed_methods']);
 
         $transaction ??= PaypalBTransaction::query()->create([
             'transaction_id'         => 'PB-' . Str::upper(Str::random(28)),
@@ -193,6 +201,7 @@ class PaypalBTransactionService
             'amount'                 => $data['amount'],
             'currency'               => $data['currency'],
             'buyer_locale'           => $data['buyer_locale'],
+            'presentation'           => $data['presentation'],
             'callback_url'           => $data['callback_url'],
             'mode'                   => 'automatic',
             'status'                 => 'creating',
@@ -220,36 +229,14 @@ class PaypalBTransactionService
             'mode'                => 'automatic',
         ])->saveOrFail();
 
-        try {
-            $provider = $this->createPaypalOrder($transaction, $account);
-            $this->storeCreatedOrder($transaction, $provider);
-            $selector->markSuccess($account);
-
-            return $transaction->fresh();
-        } catch (PaypalBApiException $exception) {
-            if ($exception->retryable) {
-                $selector->markFailure($account, $exception->getMessage());
-                $this->markUnknownCreate($transaction, $exception, 1);
-
-                return $transaction->fresh();
-            }
-
-            $selector->recordRejectedRequest($account, $exception->getMessage());
-            $this->markRejectedCreate($transaction, $exception, 1);
-
-            throw ValidationException::withMessages(['payment' => $exception->getMessage()]);
-        } catch (\Throwable $exception) {
-            // 响应格式异常也不能证明远端未创建成功，必须进入同账号核对流程。
-            $selector->markFailure($account, $exception->getMessage());
-            $this->markUnknownCreate($transaction, $exception, 1);
-
-            return $transaction->fresh();
-        }
+        return $this->submitPaypalOrder($transaction, $account, 1);
     }
 
     /**
      * B 站自营订单建单。不做签名、回调地址和重放校验（订单本来就在本站），
      * 但金额、商品与费用的一致性校验必须保留，防止本地数据错误传到 PayPal。
+     * 同一订单的串行化与会话复用由 PaypalBLocalPaymentService 在调用前完成，
+     * 这里只保证不与该订单已有的会话冲突。
      */
     public function createLocal(Order $order, array $data): PaypalBTransaction
     {
@@ -260,28 +247,23 @@ class PaypalBTransactionService
         $shipping = $this->validateShippingAddress($data['shipping_address'] ?? null);
         $buyer    = $this->validateBuyer($data['buyer'] ?? null);
         $this->assertOrderAmounts($items, $totals, $amount, $currency);
+        $this->assertNoConflictingLocalAttempts($order);
 
-        $allowedMethods = [];
-        if (! empty($this->configuration['wallet_enabled'])) {
-            $allowedMethods[] = 'wallet';
-        }
-        if (! empty($this->configuration['card_enabled'])) {
-            $allowedMethods[] = 'card';
-        }
-        if ($allowedMethods === []) {
+        $enabledMethods = $this->locallyEnabledMethods();
+        if ($enabledMethods === []) {
             throw ValidationException::withMessages([
                 'payment' => trans('PaypalB::common.local_no_method'),
             ]);
         }
 
-        $selector = new PaypalBAccountSelector($this->configuration['account_cooldown_minutes']);
-
-        try {
-            $account = $selector->select($currency, $allowedMethods);
-        } catch (\Throwable $exception) {
-            throw ValidationException::withMessages(['payment' => $exception->getMessage()]);
-        }
-
+        // 本地支付页只渲染钱包按钮，信用卡走托管页且是可选能力：账号只需具备主付款方式，
+        // 否则一开启信用卡开关，所有仅支持钱包的账号都会被排除。
+        $primaryMethod  = in_array('wallet', $enabledMethods, true) ? 'wallet' : 'card';
+        $account        = $this->selectAccount($currency, [$primaryMethod]);
+        $allowedMethods = array_values(array_filter(
+            $enabledMethods,
+            static fn (string $method): bool => $account->supportsPaymentMethods([$method])
+        ));
         $buyerEmailHash = $this->auditHash($buyer['email']);
         $buyerIpHash    = $this->auditHash($buyer['ip']);
         $transaction    = PaypalBTransaction::query()->create([
@@ -305,11 +287,12 @@ class PaypalBTransactionService
             'status'                 => 'creating',
             'callback_status'        => 'idle',
             'bridge_request'         => [
-                'order_number'    => (string) $data['order_number'],
-                'amount'          => $amount,
-                'currency'        => $currency,
-                'allowed_methods' => $allowedMethods,
-                'source'          => PaypalBTransaction::SOURCE_LOCAL,
+                'order_number'        => (string) $data['order_number'],
+                'amount'              => $amount,
+                'currency'            => $currency,
+                'allowed_methods'     => $allowedMethods,
+                'source'              => PaypalBTransaction::SOURCE_LOCAL,
+                'paypal_payload_mode' => $this->payloadMode(),
             ],
             'order_snapshot_hash'    => hash('sha256', BridgeSignature::canonicalJson([
                 'order_items'      => $items,
@@ -332,30 +315,7 @@ class PaypalBTransactionService
             'risk_flags'             => [],
         ]);
 
-        try {
-            $provider = $this->createPaypalOrder($transaction, $account);
-            $this->storeCreatedOrder($transaction, $provider);
-            $selector->markSuccess($account);
-
-            return $transaction->fresh();
-        } catch (PaypalBApiException $exception) {
-            if ($exception->retryable) {
-                $selector->markFailure($account, $exception->getMessage());
-                $this->markUnknownCreate($transaction, $exception, 1);
-
-                return $transaction->fresh();
-            }
-
-            $selector->recordRejectedRequest($account, $exception->getMessage());
-            $this->markRejectedCreate($transaction, $exception, 1);
-
-            throw ValidationException::withMessages(['payment' => $exception->getMessage()]);
-        } catch (\Throwable $exception) {
-            $selector->markFailure($account, $exception->getMessage());
-            $this->markUnknownCreate($transaction, $exception, 1);
-
-            return $transaction->fresh();
-        }
+        return $this->submitPaypalOrder($transaction, $account, 1);
     }
 
     private function retryUnknownCreate(PaypalBTransaction $transaction, PaypalBAccount $account): PaypalBTransaction
@@ -365,52 +325,169 @@ class PaypalBTransactionService
                 'payment' => '该 PayPal 创建请求已超过支付会话有效期，请先在 B 站后台核对远端订单。',
             ]);
         }
-        if (! $transaction->account_fingerprint
-            || ! hash_equals((string) $transaction->account_fingerprint, $this->accountFingerprint($account))) {
-            throw ValidationException::withMessages([
-                'payment' => 'PayPal 收款应用已发生变化，请由 B 站后台核对原支付请求后再继续。',
-            ]);
-        }
+        $this->assertAccountApplication($transaction, $account);
+
+        return $this->submitPaypalOrder($transaction, $account, 2);
+    }
+
+    /**
+     * 向 PayPal 提交创建订单请求并登记结果。三条创建路径（跨站首次、本地首次、同账号重试）
+     * 对成功、可重试失败、明确拒绝和响应异常的处理必须完全一致，否则轮询冷却和对账状态会漂移。
+     *
+     * 可重试失败与响应异常都不能证明远端未创建成功，只进入同账号核对流程，不切换账号。
+     */
+    private function submitPaypalOrder(PaypalBTransaction $transaction, PaypalBAccount $account, int $attempt): PaypalBTransaction
+    {
+        $selector = $this->accountSelector();
 
         try {
             $provider = $this->createPaypalOrder($transaction, $account);
             $this->storeCreatedOrder($transaction, $provider);
-            (new PaypalBAccountSelector($this->configuration['account_cooldown_minutes']))->markSuccess($account);
+            $selector->markSuccess($account);
+
+            // 配置为建会话时创建镜像订单：A 站下单后立即出现在 B 站订单列表（待支付）。失败只记日志。
+            app(PaypalBShopOrderService::class)->createPendingFromTransaction($transaction->fresh());
 
             return $transaction->fresh();
         } catch (PaypalBApiException $exception) {
             if ($exception->retryable) {
-                (new PaypalBAccountSelector($this->configuration['account_cooldown_minutes']))->markFailure($account, $exception->getMessage());
-                $this->markUnknownCreate($transaction, $exception, 2);
+                $selector->markFailure($account, $exception->getMessage());
+                $this->markUnknownCreate($transaction, $exception, $attempt);
 
                 return $transaction->fresh();
             }
 
-            (new PaypalBAccountSelector($this->configuration['account_cooldown_minutes']))->recordRejectedRequest($account, $exception->getMessage());
-            $this->markRejectedCreate($transaction, $exception, 2);
+            $selector->recordRejectedRequest($account, $exception->getMessage());
+            $this->markRejectedCreate($transaction, $exception, $attempt);
 
             throw ValidationException::withMessages(['payment' => $exception->getMessage()]);
         } catch (\Throwable $exception) {
-            $this->markUnknownCreate($transaction, $exception, 2);
+            $selector->markFailure($account, $exception->getMessage());
+            $this->markUnknownCreate($transaction, $exception, $attempt);
 
             return $transaction->fresh();
         }
     }
 
+    /**
+     * 自营会话的创建结果未知（连接故障、5xx、响应异常）或进程中断在 creating 时，
+     * 沿用同一账号和同一个 PayPal-Request-Id 重试；PayPal 会幂等返回原订单，不会产生第二个远端订单。
+     */
+    public function retryLocal(PaypalBTransaction $transaction): PaypalBTransaction
+    {
+        if (! $transaction->isLocal() || $transaction->paypal_order_id) {
+            throw new \LogicException('只有尚未取得 PayPal 订单号的自营会话才能重试创建。');
+        }
+
+        $account = $transaction->account;
+        if (! $account || ! $account->usesApi()) {
+            throw ValidationException::withMessages(['payment' => trans('PaypalB::common.session_reconciling')]);
+        }
+
+        return $this->retryUnknownCreate($transaction, $account);
+    }
+
+    /**
+     * 与跨站会话相同的约束：同一订单不能并行存在远端会话；被 PayPal 或账号配置拒绝后，
+     * 也不能靠新会话把订单轮询到另一个账号。按 shop_order_id 而不是订单号定位，
+     * 避免与同号的跨站镜像订单混淆。已过期且无捕获的会话不构成冲突。
+     */
+    private function assertNoConflictingLocalAttempts(Order $order): void
+    {
+        $attempts = PaypalBTransaction::query()
+            ->where('source', PaypalBTransaction::SOURCE_LOCAL)
+            ->where('shop_order_id', $order->id)
+            ->orderByDesc('id')
+            ->get();
+        foreach ($attempts as $attempt) {
+            if (($attempt->paypal_order_id || $attempt->paypal_capture_id)
+                && ! $this->isTerminalUncapturedAttempt($attempt)) {
+                throw ValidationException::withMessages([
+                    'payment' => '该订单已有 PayPal 远端支付会话，请继续原会话或由后台完成核对。',
+                ]);
+            }
+            if ($attempt->status === 'reconciling') {
+                throw ValidationException::withMessages([
+                    'payment' => trans('PaypalB::common.session_reconciling'),
+                ]);
+            }
+            if (in_array($attempt->status, ['creating', 'pending', 'completed'], true)) {
+                throw ValidationException::withMessages([
+                    'payment' => '该订单已经存在其他支付会话，不能重复创建 PayPal 订单。',
+                ]);
+            }
+            if ($attempt->status               === 'failed'
+                && $attempt->failure_retryable === false
+                && $attempt->failure_class !== 'configuration') {
+                throw ValidationException::withMessages([
+                    'payment' => '该订单此前已被 PayPal 或账号配置拒绝，不能自动更换收款账号重试。',
+                ]);
+            }
+        }
+    }
+
+    private function accountSelector(): PaypalBAccountSelector
+    {
+        return new PaypalBAccountSelector((int) ($this->configuration['account_cooldown_minutes'] ?? 10));
+    }
+
+    /**
+     * 账号池为空、币种不支持或能力不匹配都属于买家可见的业务拒绝，不是 500。
+     */
+    private function selectAccount(string $currency, array $allowedMethods): PaypalBAccount
+    {
+        try {
+            return $this->accountSelector()->select($currency, $allowedMethods);
+        } catch (\Throwable $exception) {
+            throw ValidationException::withMessages(['payment' => $exception->getMessage()]);
+        }
+    }
+
+    /**
+     * B 站配置允许的付款方式；跨站请求还会再与 A 站申请的方式取交集。
+     */
+    private function locallyEnabledMethods(): array
+    {
+        $methods = [];
+        if (! empty($this->configuration['wallet_enabled'])) {
+            $methods[] = 'wallet';
+        }
+        if (! empty($this->configuration['card_enabled'])) {
+            $methods[] = 'card';
+        }
+
+        return $methods;
+    }
+
     private function createPaypalOrder(PaypalBTransaction $transaction, PaypalBAccount $account): array
     {
-        $client = new PaypalBApiClient(
-            $account,
-            $this->configuration['sandbox_mode'],
-            $this->configuration['request_timeout_seconds']
-        );
-
-        return $client->createOrder(
+        $payload = PaypalBOrderPayload::build(
             $transaction,
             $this->returnUrl($transaction),
             $this->cancelUrl($transaction),
-            $this->configuration['merchant_display_name'],
-            $this->paypalOrderItems($transaction)
+            (string) ($this->configuration['merchant_display_name'] ?? ''),
+            $this->paypalOrderItems($transaction),
+            ['mode' => PaypalBOrderPayload::modeFor($transaction, $this->configuration)]
+        );
+
+        return $this->apiClient($account)->createOrder($transaction, $payload);
+    }
+
+    /**
+     * 当前配置决定新会话向 PayPal 提交的请求体格式；会话一旦创建就把格式记在 bridge_request 上。
+     */
+    private function payloadMode(): string
+    {
+        return PaypalBOrderPayload::normalizeMode($this->configuration['paypal_payload_mode'] ?? null);
+    }
+
+    private function apiClient(PaypalBAccount $account): PaypalBApiClient
+    {
+        // 配置缺失时宁可落到沙盒，也不能误连正式环境。
+        return new PaypalBApiClient(
+            $account,
+            (bool) ($this->configuration['sandbox_mode'] ?? true),
+            (int) ($this->configuration['request_timeout_seconds'] ?? 10)
         );
     }
 
@@ -658,8 +735,8 @@ class PaypalBTransactionService
             throw ValidationException::withMessages([$field => '买家 User-Agent 格式无效。']);
         }
         $value = (string) $value;
-        if ($value                                                                    === '' || preg_match('//u', $value) !== 1
-                          || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $value) === 1) {
+        // 控制字符必须在 trim 之前检查，否则末尾的 NUL 等字符会被静默去掉。
+        if (preg_match('//u', $value) !== 1 || preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $value) === 1) {
             throw ValidationException::withMessages([$field => '买家 User-Agent 格式无效。']);
         }
         $value = trim($value);
@@ -674,16 +751,19 @@ class PaypalBTransactionService
     {
         $key = trim((string) ($this->configuration['risk_audit_secret'] ?? ''));
         if ($key === '') {
+            $key = trim((string) ($this->configuration['audit_signing_secret'] ?? ''));
+        }
+        if ($key === '') {
             $key = trim((string) ($this->configuration['a_request_verification_secret'] ?? ''));
         }
         if ($key === '') {
             $key = 'paypal-b-risk-audit';
+
             try {
                 if (app()->bound('config')) {
-                    $key = trim((string) config('app.key', $key));
+                    $key = trim((string) config('app.key', $key)) ?: $key;
                 }
-            } catch (
-Throwable) {
+            } catch (\Throwable) {
                 // 纯单元测试或未完整启动容器时，退回到稳定默认值。
             }
         }
@@ -834,11 +914,11 @@ Throwable) {
         }
         $this->assertAccountApplication($transaction, $account);
 
-        $client = new PaypalBApiClient(
-            $account,
-            $this->configuration['sandbox_mode'],
-            $this->configuration['request_timeout_seconds']
-        );
+        $client = $this->apiClient($account);
+        if ($transaction->hasPendingCapture()) {
+            // 已经捕获过、只是资金待确认：再次捕获会被 PayPal 拒绝，只能查询原订单的最新结果。
+            return $this->refreshCapture($transaction, $account, $client);
+        }
 
         try {
             $provider = $client->captureOrder(
@@ -846,29 +926,15 @@ Throwable) {
                 (string) $transaction->reference,
                 $clientMetadataId
             );
-            $capture  = $this->captureData($provider);
-            $this->assertCaptureMatchesTransaction($transaction, $capture);
-            if (($capture['status'] ?? '') !== 'COMPLETED') {
-                $transaction->forceFill([
-                    'status'           => 'pending',
-                    'provider_status'  => (string) ($capture['status'] ?? $provider['status'] ?? 'PENDING'),
-                    'provider_payload' => $provider,
-                ])->saveOrFail();
-
-                return $transaction->fresh();
-            }
-
+            $capture = $this->captureData($provider);
         } catch (\Throwable $exception) {
             // PayPal 回跳可能重复，或 Webhook 已经先完成捕获；读取订单状态可安全恢复这类幂等场景。
-            $recovered = $this->recoverCompletedCapture($transaction, $client);
+            $recovered = $this->recoverCapture($transaction, $client);
             if ($recovered !== null) {
-                $this->markCompleted($transaction, $recovered['provider'], $recovered['capture_id']);
-                (new PaypalBAccountSelector($this->configuration['account_cooldown_minutes']))->markSuccess($account);
-
-                return $transaction->fresh();
+                return $this->applyCaptureResult($transaction, $account, $recovered['provider'], $recovered['capture']);
             }
 
-            $selector  = new PaypalBAccountSelector($this->configuration['account_cooldown_minutes']);
+            $selector  = $this->accountSelector();
             $retryable = $exception instanceof PaypalBApiException && $exception->retryable;
             if ($retryable) {
                 $selector->markFailure($account, $exception->getMessage());
@@ -896,10 +962,146 @@ Throwable) {
             throw ValidationException::withMessages(['payment' => $exception->getMessage()]);
         }
 
-        $this->markCompleted($transaction, $provider, (string) $capture['id']);
-        (new PaypalBAccountSelector($this->configuration['account_cooldown_minutes']))->markSuccess($account);
+        return $this->applyCaptureResult($transaction, $account, $provider, $capture);
+    }
+
+    /**
+     * 按 PayPal 捕获状态落库：COMPLETED 入账；PENDING 记录捕获号等待最终结果；DECLINED/FAILED 视为拒绝。
+     * 服务端捕获响应、幂等恢复、后台同步和补偿命令都走这一条路径。
+     */
+    private function applyCaptureResult(PaypalBTransaction $transaction, PaypalBAccount $account, array $provider, array $capture): PaypalBTransaction
+    {
+        try {
+            $this->assertCaptureMatchesTransaction($transaction, $capture);
+        } catch (\RuntimeException $exception) {
+            // 金额或币种对不上是必须人工核对的异常，不能当作成功也不能当作失败自动处理。
+            $transaction->forceFill([
+                'provider_payload'          => $provider,
+                'payment_exception_status'  => 'capture_mismatch',
+                'payment_exception_payload' => [
+                    'message'     => mb_substr($exception->getMessage(), 0, 2000),
+                    'capture_id'  => (string) ($capture['id'] ?? ''),
+                    'recorded_at' => now()->toIso8601String(),
+                ],
+            ])->saveOrFail();
+
+            throw ValidationException::withMessages(['payment' => $exception->getMessage()]);
+        }
+
+        $status    = strtoupper((string) ($capture['status'] ?? ''));
+        $captureId = (string) $capture['id'];
+        if (in_array($status, ['COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED'], true)) {
+            $this->markCompleted($transaction, $provider, $captureId);
+            $this->accountSelector()->markSuccess($account);
+
+            return $transaction->fresh();
+        }
+        if (in_array($status, ['DECLINED', 'FAILED'], true)) {
+            $this->markCaptureDenied($transaction, $provider, $capture);
+
+            throw ValidationException::withMessages(['payment' => trans('PaypalB::common.capture_declined')]);
+        }
+
+        // PENDING：买家已付款，PayPal 审核、电子支票清算或人工接受后才会到账。账号本身工作正常。
+        $this->markCapturePending($transaction, $provider, $capture);
+        $this->accountSelector()->markSuccess($account);
 
         return $transaction->fresh();
+    }
+
+    /**
+     * 记录待确认的捕获。捕获号一旦落库，会话就不会再过期，同一订单也不能再建新会话，
+     * 否则买家可能付两次；PayPal 最终完成时按捕获号入账，不受会话有效期限制。
+     */
+    private function markCapturePending(PaypalBTransaction $transaction, array $provider, array $capture): void
+    {
+        $captureId = trim((string) ($capture['id'] ?? ''));
+        if ($captureId !== '' && PaypalBTransaction::query()
+            ->where('paypal_capture_id', $captureId)
+            ->where('id', '<>', $transaction->id)
+            ->exists()) {
+            throw ValidationException::withMessages(['payment' => '该 PayPal 捕获号已经绑定到其他支付会话。']);
+        }
+
+        $transaction->forceFill([
+            'status'                    => 'pending',
+            'paypal_capture_id'         => $captureId !== '' ? $captureId : $transaction->paypal_capture_id,
+            'provider_status'           => strtoupper((string) ($capture['status'] ?? 'PENDING')),
+            'provider_payload'          => $provider,
+            'failure_retryable'         => null,
+            'failure_class'             => null,
+            'callback_last_error'       => null,
+            'payment_exception_status'  => 'capture_pending',
+            'payment_exception_payload' => [
+                'reason'            => (string) data_get($capture, 'status_details.reason', ''),
+                'seller_protection' => (string) data_get($capture, 'seller_protection.status', ''),
+                'recorded_at'       => now()->toIso8601String(),
+            ],
+        ])->saveOrFail();
+
+        // 让 A 站立刻知道买家已付款、只是待确认，避免 A 站在会话到期后允许重新付款。
+        app(PaypalBCallbackService::class)->queue($transaction->fresh());
+    }
+
+    /**
+     * PayPal 明确拒绝了捕获（风控拒绝、电子支票退票等）。捕获号只留在审计字段里，
+     * 不写入 paypal_capture_id，否则这条失败会话会永久阻止该订单重新付款。
+     */
+    private function markCaptureDenied(PaypalBTransaction $transaction, array $provider, array $capture): void
+    {
+        $transaction->forceFill([
+            'status'                    => 'failed',
+            'paypal_capture_id'         => null,
+            'provider_status'           => strtoupper((string) ($capture['status'] ?? 'DECLINED')),
+            'provider_payload'          => $provider,
+            'failure_retryable'         => false,
+            'failure_class'             => 'provider_rejected',
+            'payment_exception_status'  => 'capture_denied',
+            'payment_exception_payload' => [
+                'capture_id'  => (string) ($capture['id'] ?? ''),
+                'reason'      => (string) data_get($capture, 'status_details.reason', ''),
+                'recorded_at' => now()->toIso8601String(),
+            ],
+            'callback_last_error' => mb_substr('PayPal 拒绝了捕获：' . (string) data_get($capture, 'status_details.reason', ''), 0, 2000),
+        ])->saveOrFail();
+
+        app(PaypalBCallbackService::class)->queue($transaction->fresh());
+        app(PaypalBShopOrderService::class)->cancelFromTransaction($transaction->fresh(), 'capture_denied');
+    }
+
+    /**
+     * 查询 PayPal 订单上的最新捕获结果并落库。捕获仍待确认或 PayPal 暂时不可达时保持原状。
+     */
+    private function refreshCapture(PaypalBTransaction $transaction, PaypalBAccount $account, PaypalBApiClient $client): PaypalBTransaction
+    {
+        $recovered = $this->recoverCapture($transaction, $client);
+        if ($recovered === null) {
+            return $transaction->fresh();
+        }
+
+        return $this->applyCaptureResult($transaction, $account, $recovered['provider'], $recovered['capture']);
+    }
+
+    /**
+     * 后台“同步 PayPal 状态”和补偿命令使用：Webhook 丢失时也能把待确认的捕获推进到最终状态。
+     */
+    public function syncWithPaypal(PaypalBTransaction $transaction): PaypalBTransaction
+    {
+        if (! $transaction->paypal_order_id || ! in_array($transaction->status, ['pending', 'creating'], true)) {
+            return $transaction;
+        }
+        $account = $transaction->account;
+        if (! $account || ! $account->usesApi()) {
+            throw ValidationException::withMessages(['payment' => 'PayPal 收款账号不可用，无法同步状态。']);
+        }
+        $this->assertAccountApplication($transaction, $account);
+
+        try {
+            return Cache::store('database')->lock('paypal_b:capture:' . $transaction->id, 180)
+                ->block(15, fn (): PaypalBTransaction => $this->refreshCapture($transaction, $account, $this->apiClient($account)));
+        } catch (LockTimeoutException) {
+            throw ValidationException::withMessages(['payment' => trans('PaypalB::common.session_processing')]);
+        }
     }
 
     /**
@@ -931,6 +1133,7 @@ Throwable) {
             // 失效本身必须保留；队列或回调暂时不可用时由补偿命令再次投递。
             report($exception);
         }
+        app(PaypalBShopOrderService::class)->cancelFromTransaction($transaction->fresh(), $reason);
     }
 
     public function applyWebhook(PaypalBTransaction $transaction, array $event): PaypalBTransaction
@@ -942,26 +1145,33 @@ Throwable) {
         if (str_starts_with($eventType, 'CUSTOMER.DISPUTE.')) {
             return $this->applyDisputeWebhook($transaction, $event);
         }
-        if (($event['event_type'] ?? '') !== 'PAYMENT.CAPTURE.COMPLETED') {
-            throw ValidationException::withMessages(['webhook' => 'PayPal Webhook 事件类型不是已完成的收款事件。']);
+        if (! in_array($eventType, ['PAYMENT.CAPTURE.COMPLETED', 'PAYMENT.CAPTURE.PENDING', 'PAYMENT.CAPTURE.DENIED'], true)) {
+            throw ValidationException::withMessages(['webhook' => 'PayPal Webhook 事件类型不是收款结果事件。']);
         }
 
         $resource = (array) ($event['resource'] ?? []);
         $amount   = (array) ($resource['amount'] ?? []);
-        if ((string) ($resource['status'] ?? '') !== 'COMPLETED') {
-            throw ValidationException::withMessages(['webhook' => 'PayPal Webhook 不是已完成的收款事件。']);
+        $status   = strtoupper((string) ($resource['status'] ?? ''));
+        $expected = match ($eventType) {
+            'PAYMENT.CAPTURE.COMPLETED' => ['COMPLETED'],
+            'PAYMENT.CAPTURE.PENDING'   => ['PENDING'],
+            default                     => ['DECLINED', 'FAILED'],
+        };
+        if (! in_array($status, $expected, true)) {
+            throw ValidationException::withMessages(['webhook' => 'PayPal Webhook 的捕获状态与事件类型不符。']);
         }
         $captureId = trim((string) ($resource['id'] ?? ''));
         $orderId   = trim((string) data_get($resource, 'supplementary_data.related_ids.order_id', ''));
         $invoiceId = trim((string) ($resource['invoice_id'] ?? ''));
-        if ($captureId === '' || $orderId === '' || $invoiceId === '') {
-            throw ValidationException::withMessages(['webhook' => 'PayPal Webhook 缺少捕获号、订单号或 invoice_id。']);
+        if ($captureId === '' || $orderId === '') {
+            throw ValidationException::withMessages(['webhook' => 'PayPal Webhook 缺少捕获号或 PayPal 订单号。']);
         }
         if (! hash_equals((string) $transaction->paypal_order_id, $orderId)) {
             throw ValidationException::withMessages(['webhook' => 'PayPal Webhook 订单号与跨站会话不一致。']);
         }
-        if (! hash_equals((string) $transaction->reference, $invoiceId)) {
-            throw ValidationException::withMessages(['webhook' => 'PayPal Webhook invoice_id 与跨站支付引用不一致。']);
+        // 发票编号在完整明细模式是支付引用，在兼容模式是订单号；携带时必须与其一一致。
+        if ($invoiceId !== '' && ! in_array($invoiceId, [(string) $transaction->reference, (string) $transaction->order_number], true)) {
+            throw ValidationException::withMessages(['webhook' => 'PayPal Webhook 发票编号与支付会话不一致。']);
         }
         if ($transaction->paypal_capture_id && ! hash_equals((string) $transaction->paypal_capture_id, $captureId)) {
             throw ValidationException::withMessages(['webhook' => 'PayPal Webhook 捕获号与已记录交易不一致。']);
@@ -972,30 +1182,45 @@ Throwable) {
             throw ValidationException::withMessages(['webhook' => 'PayPal Webhook 金额与跨站订单不一致。']);
         }
 
-        $this->markCompleted($transaction, $event, $captureId);
+        if ($eventType === 'PAYMENT.CAPTURE.COMPLETED') {
+            $this->markCompleted($transaction, $event, $captureId);
+
+            return $transaction->fresh();
+        }
+        if ($transaction->status === 'completed') {
+            // 迟到的待处理或拒绝事件不能推翻已确认的收款；拒绝到账后的资金变化由撤销/争议事件处理。
+            return $transaction;
+        }
+        if ($eventType === 'PAYMENT.CAPTURE.PENDING') {
+            // 保留服务端捕获响应里的收货地址等信息，只补捕获号和待处理原因。
+            $this->markCapturePending($transaction, (array) ($transaction->provider_payload ?: $event), $resource);
+
+            return $transaction->fresh();
+        }
+
+        $this->markCaptureDenied($transaction, (array) ($transaction->provider_payload ?: $event), $resource);
 
         return $transaction->fresh();
     }
 
     /**
-     * Webhook 只按同一账号、PayPal Order ID 和 invoice_id 定位；捕获号若已记录也必须一致。
+     * Webhook 按同一账号与 PayPal Order ID 定位（订单号在本表唯一）；发票编号的一致性在 applyWebhook 中校验，
+     * 捕获号若已记录也必须一致。
      */
     public function findWebhookTransaction(array $event, int $accountId): ?PaypalBTransaction
     {
         $eventType = (string) ($event['event_type'] ?? '');
         $resource  = (array) ($event['resource'] ?? []);
-        if ($eventType === 'PAYMENT.CAPTURE.COMPLETED') {
+        if (in_array($eventType, ['PAYMENT.CAPTURE.COMPLETED', 'PAYMENT.CAPTURE.PENDING', 'PAYMENT.CAPTURE.DENIED'], true)) {
             $captureId = trim((string) ($resource['id'] ?? ''));
             $orderId   = trim((string) data_get($resource, 'supplementary_data.related_ids.order_id', ''));
-            $invoiceId = trim((string) ($resource['invoice_id'] ?? ''));
-            if ($captureId === '' || $orderId === '' || $invoiceId === '') {
+            if ($captureId === '' || $orderId === '') {
                 return null;
             }
 
             return PaypalBTransaction::query()
                 ->where('account_id', $accountId)
                 ->where('paypal_order_id', $orderId)
-                ->where('reference', $invoiceId)
                 ->where(function ($query) use ($captureId): void {
                     $query->whereNull('paypal_capture_id')->orWhere('paypal_capture_id', $captureId);
                 })
@@ -1101,12 +1326,15 @@ Throwable) {
 
     public function statusPayload(PaypalBTransaction $transaction): array
     {
+        // 已捕获待确认的会话不会过期：买家已经付款，过期只会把它推向重复付款。
         if ($transaction->expires_at
             && $transaction->expires_at->isPast()
+            && ! $transaction->hasPendingCapture()
             && $transaction->status !== 'reconciling'
             && ! in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired'], true)) {
             $transaction->forceFill(['status' => 'expired'])->saveOrFail();
             app(PaypalBCallbackService::class)->queue($transaction->fresh());
+            app(PaypalBShopOrderService::class)->cancelFromTransaction($transaction->fresh(), 'expired');
         }
 
         return [
@@ -1123,6 +1351,8 @@ Throwable) {
             'refund_status'            => (string) ($transaction->refund_status ?: 'none'),
             'refunded_amount'          => PaypalBMoney::normalize($transaction->refunded_amount ?: '0', (string) $transaction->currency),
             'dispute_status'           => $transaction->dispute_status,
+            // A 站据此确认 B 站确实按内嵌方式建了会话；缺失即视为旧版 B 站，不能内嵌。
+            'presentation'             => (string) ($transaction->presentation ?: PaypalBTransaction::PRESENTATION_REDIRECT),
         ];
     }
 
@@ -1190,11 +1420,7 @@ Throwable) {
         $this->assertAccountApplication($transaction, $account);
 
         try {
-            return (new PaypalBApiClient(
-                $account,
-                $this->configuration['sandbox_mode'],
-                $this->configuration['request_timeout_seconds']
-            ))->clientToken();
+            return $this->apiClient($account)->clientToken();
         } catch (ValidationException $exception) {
             throw $exception;
         } catch (\Throwable $exception) {
@@ -1209,7 +1435,7 @@ Throwable) {
             (string) $transaction->public_token,
             (string) $transaction->paypal_order_id,
             (string) $transaction->reference,
-        ]), $this->configuration['a_callback_signing_secret']);
+        ]), $this->transactionSigningSecret());
     }
 
     public function assertCaptureToken(PaypalBTransaction $transaction, string $token): void
@@ -1219,8 +1445,23 @@ Throwable) {
         }
     }
 
+    /**
+     * 正常运行时由 PaypalBConfiguration 提供：桥接会话继续使用既有回调密钥，
+     * 独立 B 站则使用 APP_KEY 派生密钥。最后的回退仅兼容旧交易和窄单元测试，
+     * 不会被完整配置路径使用。
+     */
+    private function transactionSigningSecret(): string
+    {
+        $secret = trim((string) ($this->configuration['transaction_signing_secret']
+            ?? $this->configuration['a_callback_signing_secret']
+            ?? ''));
+
+        return $secret !== '' ? $secret : 'paypal-b-legacy-transaction-signing';
+    }
+
     private function validateCreatePayload(array $payload): array
     {
+        $this->assertBridgeEnabled();
         foreach (['reference', 'order_number', 'amount', 'currency', 'callback_url'] as $field) {
             if (trim((string) ($payload[$field] ?? '')) === '') {
                 throw ValidationException::withMessages([$field => 'A 站请求缺少必要字段。']);
@@ -1318,6 +1559,7 @@ Throwable) {
             'amount'              => $amount,
             'currency'            => $currency,
             'buyer_locale'        => $this->validateLocale($payload['locale'] ?? null),
+            'presentation'        => $this->validatePresentation($payload['presentation'] ?? null),
             'callback_url'        => trim((string) $payload['callback_url']),
             'expires_at'          => $expiresAt,
             'allowed_methods'     => $allowedMethods,
@@ -1371,7 +1613,27 @@ Throwable) {
         return preg_match('/^[a-z]{2}(?:_[a-z]{2})?$/', $locale) === 1 ? $locale : null;
     }
 
-    private function validatePaypalItemSource(mixed $source): string    {
+    /**
+     * 呈现方式由 A 站声明。B 站未允许内嵌时明确拒绝并给出稳定错误码，A 站据此自动降级为顶层跳转，
+     * 而不是静默改成 redirect：那样 A 站会以为内嵌成功，把一个拒绝被嵌入的页面放进 iframe。
+     */
+    private function validatePresentation(mixed $presentation): string
+    {
+        $presentation = strtolower(trim((string) ($presentation ?: PaypalBTransaction::PRESENTATION_REDIRECT)));
+        if (! in_array($presentation, [PaypalBTransaction::PRESENTATION_REDIRECT, PaypalBTransaction::PRESENTATION_EMBEDDED], true)) {
+            throw ValidationException::withMessages(['presentation' => 'A 站提交了不支持的结账页呈现方式。']);
+        }
+        if ($presentation === PaypalBTransaction::PRESENTATION_EMBEDDED && empty($this->configuration['embedded_enabled'])) {
+            throw ValidationException::withMessages([
+                'presentation' => self::EMBEDDED_NOT_ALLOWED,
+            ]);
+        }
+
+        return $presentation;
+    }
+
+    private function validatePaypalItemSource(mixed $source): string
+    {
         $source = strtolower(trim((string) ($source ?: self::ITEM_SOURCE_A_ORDER)));
         if (! in_array($source, [self::ITEM_SOURCE_A_ORDER, self::ITEM_SOURCE_A_MAPPING], true)) {
             throw ValidationException::withMessages(['paypal_item_source' => 'A 站提交了不支持的 PayPal 商品明细模式。']);
@@ -1569,6 +1831,7 @@ Throwable) {
             'allowed_methods'     => $data['allowed_methods'],
             'order_snapshot'      => $data['order_snapshot'],
             'order_snapshot_hash' => $data['order_snapshot_hash'],
+            'paypal_payload_mode' => $this->payloadMode(),
         ];
     }
 
@@ -1596,7 +1859,10 @@ Throwable) {
         }
     }
 
-    private function allowedMethods(PaypalBTransaction $transaction): array
+    /**
+     * 会话创建时固定下来的付款方式；跨站会话来自 A 站申请与 B 站开关的交集，本地会话来自账号实际能力。
+     */
+    public function allowedMethods(PaypalBTransaction $transaction): array
     {
         $methods = data_get($transaction->bridge_request, 'allowed_methods', ['wallet']);
         if (! is_array($methods)) {
@@ -1618,8 +1884,13 @@ Throwable) {
                 'payment' => trans('PaypalB::common.session_reconciling'),
             ]);
         }
+        if ($transaction->hasPendingCapture()) {
+            // 捕获已发生，只等 PayPal 确认；有效期对它不再有意义。
+            return;
+        }
         if ($transaction->expires_at && $transaction->expires_at->isPast() && $transaction->status !== 'completed') {
             $transaction->forceFill(['status' => 'expired'])->saveOrFail();
+            app(PaypalBShopOrderService::class)->cancelFromTransaction($transaction->fresh(), 'expired');
 
             throw ValidationException::withMessages(['payment' => trans('PaypalB::common.session_expired')]);
         }
@@ -1673,23 +1944,19 @@ Throwable) {
     }
 
     /**
-     * 查询已完成的 PayPal 订单，恢复 capture 响应丢失或重复回跳造成的幂等场景。
+     * 读取 PayPal 订单上已有的捕获，恢复 capture 响应丢失、重复回跳或 Webhook 先到的幂等场景；
+     * 捕获仍待确认时同样返回，由调用方按状态处理。没有捕获或查询失败返回 null。
      */
-    private function recoverCompletedCapture(PaypalBTransaction $transaction, PaypalBApiClient $client): ?array
+    private function recoverCapture(PaypalBTransaction $transaction, PaypalBApiClient $client): ?array
     {
         try {
             $provider = $client->getOrder((string) $transaction->paypal_order_id);
             $capture  = $this->captureData($provider);
-            if (($capture['status'] ?? '') !== 'COMPLETED') {
+            if (trim((string) ($capture['id'] ?? '')) === '') {
                 return null;
             }
 
-            $this->assertCaptureMatchesTransaction($transaction, $capture);
-
-            return [
-                'provider'   => $provider,
-                'capture_id' => (string) $capture['id'],
-            ];
+            return ['provider' => $provider, 'capture' => $capture];
         } catch (\Throwable) {
             return null;
         }
@@ -1706,8 +1973,12 @@ Throwable) {
 
                 return false;
             }
-            if ($locked->status === 'expired'
-                || ($locked->expires_at && $locked->expires_at->isPast())) {
+            // 捕获早已在有效期内发生、只是资金待确认的会话，PayPal 几天后才完成也必须入账。
+            $completingRecordedCapture = $locked->paypal_capture_id
+                && hash_equals((string) $locked->paypal_capture_id, $providerId);
+            if (! $completingRecordedCapture
+                && ($locked->status === 'expired'
+                || ($locked->expires_at && $locked->expires_at->isPast()))) {
                 throw ValidationException::withMessages(['payment' => '支付会话已过期，不能再确认收款。']);
             }
             if (PaypalBTransaction::query()
@@ -1717,16 +1988,20 @@ Throwable) {
                 throw ValidationException::withMessages(['payment' => '该 PayPal 捕获号已经绑定到其他支付会话。']);
             }
             $locked->forceFill([
-                'status'                   => 'completed',
-                'paypal_capture_id'        => $providerId,
-                'provider_status'          => 'COMPLETED',
-                'provider_payload'         => $provider,
-                'payer_email_hash'         => $this->payerEmailHash($locked, $provider),
+                'status'                    => 'completed',
+                'paypal_capture_id'         => $providerId,
+                'provider_status'           => 'COMPLETED',
+                'provider_payload'          => $provider,
+                'payer_email_hash'          => $this->payerEmailHash($locked, $provider),
+                'failure_retryable'         => null,
+                'failure_class'             => null,
+                'payment_exception_status'  => null,
+                'payment_exception_payload' => null,
                 // 自营订单没有 A 站可通知，回调状态直接标记为无需发送。
-                'callback_status'          => $locked->isLocal() ? 'skipped' : 'pending',
-                'callback_next_attempt_at' => $locked->isLocal() ? null : now(),
-                'callback_last_error'      => null,
-                'paid_at'                  => now(),
+                'callback_status'           => $locked->isLocal() ? 'skipped' : 'pending',
+                'callback_next_attempt_at'  => $locked->isLocal() ? null : now(),
+                'callback_last_error'       => null,
+                'paid_at'                   => now(),
             ])->saveOrFail();
 
             return true;

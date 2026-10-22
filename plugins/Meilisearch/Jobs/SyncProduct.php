@@ -15,8 +15,6 @@ class SyncProduct implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public bool $afterCommit = true;
-
     public int $tries = 3;
 
     public int $timeout = 120;
@@ -25,7 +23,7 @@ class SyncProduct implements ShouldBeUnique, ShouldQueue
 
     public function __construct(public int $productId, public string $catalog = CatalogContext::REAL)
     {
-        $this->onQueue('meilisearch');
+        $this->onQueue('meilisearch')->afterCommit();
     }
 
     /**

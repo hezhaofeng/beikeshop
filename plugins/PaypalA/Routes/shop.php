@@ -8,6 +8,13 @@ $register = function (): void {
     Route::post('orders/{number}/start', [PaypalAController::class, 'start'])
         ->middleware('throttle:10,1')
         ->name('orders.start');
+    // 内嵌模式下支付页轮询本站状态；服务端向 B 站签名拉取，不信任浏览器消息。
+    Route::get('orders/{number}/status', [PaypalAController::class, 'status'])
+        ->middleware('throttle:60,1')
+        ->name('orders.status');
+    Route::post('orders/{number}/embedded-fallback', [PaypalAController::class, 'embeddedFallback'])
+        ->middleware('throttle:10,1')
+        ->name('orders.embedded_fallback');
     Route::get('return', [PaypalAController::class, 'returned'])->name('return');
 };
 

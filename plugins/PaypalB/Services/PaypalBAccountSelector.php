@@ -3,6 +3,7 @@
 namespace Plugin\PaypalB\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Plugin\PaypalB\Models\PaypalBAccount;
 use Plugin\PaypalB\Models\PaypalBRotationState;
@@ -34,7 +35,14 @@ class PaypalBAccountSelector
             $account = $this->chooseNextEligibleAccount($accounts->all(), $currency, $requiredMethods, $state->last_account_id);
 
             if (! $account) {
-                throw ValidationException::withMessages(['payment' => '当前没有可用于该币种的 PayPal 收款账号。']);
+                // 买家只看到通用提示；逐账号的排除原因写入日志，后台据此排查配置。
+                Log::warning('PaypalB 没有可用于本次支付的收款账号。', [
+                    'currency'         => $currency,
+                    'required_methods' => $requiredMethods,
+                    'reasons'          => self::unavailabilityReasons($accounts->all(), $currency, $requiredMethods),
+                ]);
+
+                throw ValidationException::withMessages(['payment' => '当前没有可用于该币种和付款方式的 PayPal 收款账号，请联系商家。']);
             }
 
             $state->forceFill(['last_account_id' => $account->id])->saveOrFail();
@@ -69,6 +77,49 @@ class PaypalBAccountSelector
         }
 
         return $eligibleAccounts[0];
+    }
+
+    /**
+     * 选不到账号时逐账号说明被排除的原因。传入的应是已启用的自动 API 账号列表。
+     *
+     * @param array<int, PaypalBAccount> $accounts
+     * @param array<int, string>         $requiredMethods
+     * @return array<int, string>
+     */
+    public static function unavailabilityReasons(array $accounts, string $currency, array $requiredMethods): array
+    {
+        if ($accounts === []) {
+            return ['没有已启用的企业或个人卖家 API 账号，请在“收款账号与交易管理”中添加并启用账号。'];
+        }
+
+        $reasons = [];
+        foreach ($accounts as $account) {
+            $label = sprintf('账号 #%s %s', $account->id, $account->name);
+            if (! $account->usesApi()) {
+                $reasons[] = $label . '：类型不是自动 API 账号。';
+
+                continue;
+            }
+            if ($account->failure_cooldown_until && $account->failure_cooldown_until->isFuture()) {
+                $reasons[] = $label . '：处于故障冷却，至 ' . $account->failure_cooldown_until->format('Y-m-d H:i:s') . '。';
+
+                continue;
+            }
+            if (! $account->supportsCurrency($currency)) {
+                $reasons[] = $label . '：不支持币种 ' . $currency . '，当前支持：' . $account->supported_currencies . '。';
+
+                continue;
+            }
+            foreach ($requiredMethods as $method) {
+                if (! $account->supportsPaymentMethods([$method])) {
+                    $reasons[] = $label . '：未开启' . ($method === 'card' ? '信用卡' : '钱包') . '收款能力。';
+
+                    continue 2;
+                }
+            }
+        }
+
+        return $reasons;
     }
 
     public function markSuccess(PaypalBAccount $account): void

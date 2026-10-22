@@ -197,10 +197,29 @@
       },
 
       beforeMount() {
-        this.form.menus.forEach((menu, index) => {
-          menu.childrenGroup.forEach((group, groupIndex) => {
+        // 兼容历史或异常数据：menus、childrenGroup、children 可能为 null 或缺失，
+        // 模板与方法都按数组处理，这里统一兜底，避免整页无法打开
+        if (!this.form || typeof this.form !== 'object' || Array.isArray(this.form)) {
+          this.form = { menus: [] };
+        }
+        if (!Array.isArray(this.form.menus)) {
+          this.$set(this.form, 'menus', []);
+        }
+        this.form.menus = this.form.menus.filter(menu => menu && typeof menu === 'object');
+        this.form.menus.forEach((menu) => {
+          if (!Array.isArray(menu.childrenGroup)) {
+            this.$set(menu, 'childrenGroup', []);
+          }
+          menu.childrenGroup = menu.childrenGroup.filter(group => group && typeof group === 'object');
+          if (!menu.badge || typeof menu.badge !== 'object') {
+            this.$set(menu, 'badge', { isShow: false, name: {}, bg_color: '#fd560f', text_color: '#ffffff' });
+          }
+          menu.childrenGroup.forEach((group) => {
             if (!group.id) {
               group.id = bk.randomString(8);
+            }
+            if (!Array.isArray(group.children)) {
+              this.$set(group, 'children', []);
             }
           })
         })
@@ -230,7 +249,8 @@
         },
 
         groupTypeName(value) {
-          return this.source.types.find(e => e.value == (value || 'link')).name
+          const type = this.source.types.find(e => e.value == (value || 'link'));
+          return type ? type.name : (value || '')
         },
 
         addChildrenGroup() {

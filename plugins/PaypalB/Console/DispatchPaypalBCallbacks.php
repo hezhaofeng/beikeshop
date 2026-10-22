@@ -18,7 +18,13 @@ class DispatchPaypalBCallbacks extends Command
         $transactions = PaypalBTransaction::query()
             // 自营订单没有 A 站回调目标，不必参与补偿投递。
             ->where('source', '<>', PaypalBTransaction::SOURCE_LOCAL)
-            ->whereIn('status', ['completed', 'cancelled', 'failed', 'expired'])
+            ->where(function ($query): void {
+                $query->whereIn('status', ['completed', 'cancelled', 'failed', 'expired'])
+                    // 已捕获待确认的会话也要通知 A 站锁单。
+                    ->orWhere(function ($query): void {
+                        $query->where('status', 'pending')->whereNotNull('paypal_capture_id');
+                    });
+            })
             ->whereIn('callback_status', ['idle', 'pending', 'failed', 'sending'])
             ->where(function ($query): void {
                 $query->whereNull('callback_next_attempt_at')
