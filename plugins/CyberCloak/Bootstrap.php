@@ -73,20 +73,21 @@ class Bootstrap
             return view('CyberCloak::admin.mapping')->render();
         });
 
-        // 显式绑定只改造前台商品和分类路由，后台同名参数继续使用默认绑定。
+        // 显式绑定只改造前台商品和分类路由；其他路由原样返回参数值，交给 Laravel 隐式绑定按控制器签名决定是否解析模型，
+        // 避免 name(int $id) 这类只需要原始 ID 的方法收到模型对象。
         \Illuminate\Support\Facades\Route::bind('product', function ($value, $route) {
             if ($route->getName() === 'shop.products.show') {
                 return app(CatalogRouteService::class)->bindProduct($value, $route);
             }
 
-            return (new \Beike\Models\Product)->resolveRouteBinding($value);
+            return $value;
         });
         \Illuminate\Support\Facades\Route::bind('category', function ($value, $route) {
             if ($route->getName() === 'shop.categories.show') {
                 return app(CatalogRouteService::class)->bindCategory($value, $route);
             }
 
-            return (new \Beike\Models\Category)->resolveRouteBinding($value);
+            return $value;
         });
 
     }
