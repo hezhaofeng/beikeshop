@@ -13,6 +13,8 @@ use Plugin\PaypalB\Models\PaypalBTransaction;
 use Plugin\PaypalB\Services\PaypalBCallbackService;
 use Plugin\PaypalB\Services\PaypalBConfiguration;
 use Plugin\PaypalB\Services\PaypalBRefundService;
+use Plugin\PaypalB\Services\PaypalBTransactionService;
+use Plugin\PaypalB\Services\PaypalBWebhookRegistrar;
 
 class PaypalBAdminController
 {
@@ -54,7 +56,9 @@ class PaypalBAdminController
 
     public function storeAccount(Request $request): RedirectResponse
     {
-        $data = $this->validateAccount($request);
+        $data         = $this->validateAccount($request);
+        $wantsActive  = ! empty($data['active']);
+        $autoRegister = $request->boolean('register_webhook');
         if (PaypalBAccount::isAutomaticApiAccountType($data['account_type']) && trim((string) ($data['webhook_id'] ?? '')) === '') {
             $data['active'] = false;
         }
@@ -63,7 +67,24 @@ class PaypalBAdminController
         $this->fillAccount($account, $data);
         $account->saveOrFail();
 
-        return back()->with('success', 'PayPal 收款账号已添加。');
+        if (! $autoRegister || trim((string) $account->webhook_id) !== '') {
+            return back()->with('success', 'PayPal 收款账号已添加。');
+        }
+
+        // Webhook 地址里带账号 ID，所以只能先落库再注册；注册失败也保留账号，管理员修正后可在列表重试。
+        try {
+            $result = app(PaypalBWebhookRegistrar::class)->register($account);
+        } catch (ValidationException $exception) {
+            return back()->withErrors([
+                'webhook_id' => '账号已以停用状态保存，但自动注册 Webhook 失败：' . $exception->getMessage() . ' 修正后可在账号列表中点击“自动注册 Webhook”重试。',
+            ]);
+        }
+        if ($wantsActive) {
+            // 新增时被迫停用的唯一原因是缺少 Webhook ID，现在已补齐，按管理员原意启用。
+            $account->forceFill(['active' => true])->saveOrFail();
+        }
+
+        return back()->with('success', 'PayPal 收款账号已添加。' . $this->webhookRegisteredMessage($account->fresh(), $result));
     }
 
     public function updateAccount(Request $request, PaypalBAccount $account): RedirectResponse
@@ -87,10 +108,49 @@ class PaypalBAdminController
         return back()->with('success', 'PayPal 收款账号已删除。');
     }
 
+    /**
+     * 用账号自己的凭据在 PayPal 创建或复用 Webhook，并把 ID 写回；不改变账号启用状态。
+     */
+    public function registerWebhook(PaypalBAccount $account): RedirectResponse
+    {
+        try {
+            $result = app(PaypalBWebhookRegistrar::class)->register($account);
+        } catch (ValidationException $exception) {
+            return back()->withErrors(['webhook_id' => '自动注册 Webhook 失败：' . $exception->getMessage()]);
+        }
+
+        return back()->with('success', $this->webhookRegisteredMessage($account->fresh(), $result));
+    }
+
+    /**
+     * @param array{webhook_id: string, url: string, reused: bool, event_types: array<int, string>, unavailable: array<int, string>} $result
+     */
+    private function webhookRegisteredMessage(PaypalBAccount $account, array $result): string
+    {
+        $message = sprintf(
+            'Webhook 已%s（ID：%s，地址：%s，订阅事件 %d 个）。',
+            $result['reused'] ? '复用 PayPal 上已有的登记' : '在 PayPal 创建',
+            $result['webhook_id'],
+            $result['url'],
+            count($result['event_types'])
+        );
+        if ($result['unavailable'] !== []) {
+            $message .= '当前 PayPal 应用不提供以下事件，已跳过：' . implode('、', $result['unavailable']) . '。';
+        }
+        if (! $account->active) {
+            $message .= '账号仍处于停用状态，编辑账号并勾选“启用账号”后即可加入轮询。';
+        }
+
+        return $message;
+    }
+
     public function retryCallback(PaypalBTransaction $transaction): RedirectResponse
     {
-        if (! in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired'], true)) {
-            return back()->withErrors(['transaction' => '只有最终状态的会话可以重试回调。']);
+        if ($transaction->isLocal()) {
+            return back()->withErrors(['transaction' => '本站订单没有 A 站回调目标，收款结果已直接写入本站订单。']);
+        }
+        if (! in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired'], true) && ! $transaction->hasPendingCapture()) {
+            return back()->withErrors(['transaction' => '只有最终状态或已捕获待确认的会话可以重试回调。']);
         }
 
         if (! app(PaypalBCallbackService::class)->send($transaction, true)) {
@@ -98,6 +158,30 @@ class PaypalBAdminController
         }
 
         return back()->with('success', 'A 站回调已重试。');
+    }
+
+    /**
+     * 向 PayPal 查询待确认捕获的最新结果。Webhook 丢失或延迟时，后台不必等半小时一次的补偿命令。
+     */
+    public function syncPaypalStatus(PaypalBTransaction $transaction): RedirectResponse
+    {
+        if (! $transaction->paypal_order_id || ! in_array($transaction->status, ['pending', 'creating'], true)) {
+            return back()->withErrors(['transaction' => '只有已创建 PayPal 订单且尚未完成的会话可以同步状态。']);
+        }
+
+        try {
+            $synced = app(PaypalBTransactionService::class)->syncWithPaypal($transaction);
+        } catch (ValidationException $exception) {
+            return back()->withErrors(['transaction' => 'PayPal 状态已同步：' . $exception->getMessage()]);
+        }
+
+        $message = match ((string) $synced->status) {
+            'completed' => 'PayPal 已确认到账，收款已入账。',
+            'failed'    => 'PayPal 已拒绝该笔付款。',
+            default     => 'PayPal 仍在确认中' . ($synced->pendingReason() !== '' ? '（' . $synced->pendingReason() . '）' : '') . '。',
+        };
+
+        return back()->with('success', $message);
     }
 
     public function requestRefund(Request $request, PaypalBTransaction $transaction): RedirectResponse

@@ -12,13 +12,21 @@
         <a class="btn btn-primary" href="{{ $fallback_url }}">{{ trans('PaypalB::common.use_wallet') }}</a>
       @endif
       @if(!empty($return_url))
-        <a class="btn btn-outline-secondary" href="{{ $return_url }}">{{ trans('PaypalB::common.back_to_order') }}</a>
+        {{-- 内嵌时“返回订单”必须在顶层打开：iframe 内加载 A 站页面会被 A 站自己拒绝嵌入。 --}}
+        <a class="btn btn-outline-secondary" href="{{ $return_url }}" @if(!empty($embedded)) target="_top" @endif>{{ trans('PaypalB::common.back_to_order') }}</a>
       @endif
     </div>
 
     <div class="small text-secondary mt-4 pt-3 border-top">
       {{ trans('PaypalB::common.customer_service') }}：
-      <a href="{{ $merchant['contact_url'] }}" class="link-secondary">{{ $merchant['support_email'] }}</a>
+      <a href="{{ $merchant['contact_url'] }}" class="link-secondary" @if(!empty($embedded)) target="_blank" rel="noopener noreferrer" @endif>{{ $merchant['support_email'] }}</a>
     </div>
   </div>
 @endsection
+
+@push('scripts')
+  <script>
+    // 会话已结束或已付款待确认时立即通知父页面，A 站据此拉取真实状态并给出对应提示。
+    if (window.PaypalBEmbed) window.PaypalBEmbed.send(@json((string) ($embed_event ?? 'ended')));
+  </script>
+@endpush

@@ -45,11 +45,16 @@ return [
     'payment_accepted'    => 'PayPal has accepted the payment and is confirming the result…',
     'payment_confirming'  => 'PayPal is still confirming the payment. Your order will update automatically once it settles.',
     'payment_not_done'    => 'The PayPal payment could not be completed.',
+    'success_review_notice' => 'PayPal has accepted your payment and is still reviewing it. Your order shows as unpaid until the review is complete, then it updates automatically. Please do not pay again.',
 
     // Error page
     'error_title'      => 'PayPal payment is unavailable',
     'use_wallet'       => 'Pay with PayPal wallet instead',
     'back_to_order'    => 'Back to order',
+
+    // Embedded finish page
+    'finish_title'     => 'Returning to the store',
+    'finish_returning' => 'Taking you back to the store…',
 
     // Payment status messages
     'status_completed'   => 'The PayPal payment is complete.',
@@ -64,17 +69,19 @@ return [
     'capture_failed'     => 'PayPal could not capture the payment. Please try again shortly.',
 
     // Session-related buyer messages
-    'session_ended'        => 'This PayPal payment session has ended. Please start the payment again from the original site.',
-    'session_expired'      => 'The payment session has expired.',
-    'session_processing'   => 'This payment is being processed. Please check the status shortly.',
-    'session_reconciling'  => 'The PayPal result is not confirmed yet. Please try again later or contact the merchant.',
-    'session_unavailable'  => 'The PayPal authorisation link is unavailable. Please start the payment again.',
-    'method_not_enabled'   => 'This payment method is not enabled for this payment session.',
-    'card_not_enabled'     => 'Card payments are currently disabled on this site.',
-    'wallet_not_enabled'   => 'PayPal wallet payments are currently disabled on this site.',
-    'card_not_supported'   => 'The current PayPal account does not support automatic card payments.',
-    'card_component_down'  => 'The PayPal card component is temporarily unavailable. Please pay with the PayPal wallet instead.',
-    'capture_token_invalid' => 'The payment token is invalid. Please start the payment again from the original site.',
+    'session_ended'           => 'This PayPal payment session has ended. Please start the payment again from the original site.',
+    'session_expired'         => 'The payment session has expired.',
+    'session_processing'      => 'This payment is being processed. Please check the status shortly.',
+    'session_reconciling'     => 'The PayPal result is not confirmed yet. Please try again later or contact the merchant.',
+    'session_unavailable'     => 'The PayPal authorisation link is unavailable. Please start the payment again.',
+    'method_not_enabled'      => 'This payment method is not enabled for this payment session.',
+    'card_not_enabled'        => 'Card payments are currently disabled on this site.',
+    'wallet_not_enabled'      => 'PayPal wallet payments are currently disabled on this site.',
+    'card_not_supported'      => 'The current PayPal account does not support automatic card payments.',
+    'card_component_down'     => 'The PayPal card component is temporarily unavailable. Please pay with the PayPal wallet instead.',
+    'capture_token_invalid'   => 'The payment token is invalid. Please start the payment again from the original site.',
+    'session_capture_pending' => 'PayPal has accepted this payment and is still confirming it. Please do not pay again; your order will update automatically once PayPal completes the review.',
+    'capture_declined'        => 'PayPal declined this payment. Please try another payment method or contact the merchant.',
 
     // Policy pages
     'contact_title'     => 'Contact Us',
@@ -91,10 +98,12 @@ return [
     'terms_body_2'      => 'Please read the order details, refund policy, privacy policy and terms of sale before paying.',
 
     // B 站自营订单支付
-    'local_title'              => 'PayPal',
-    'local_subtitle'           => 'Continue to the secure PayPal payment page. Your order status updates automatically once the payment completes.',
-    'local_session_notice'     => 'This payment session is valid for :minutes minutes. Please do not pay from multiple tabs at the same time.',
-    'local_pay_now'            => 'Pay with PayPal',
-    'local_order_not_payable'  => 'This order cannot start a PayPal payment right now.',
-    'local_no_method'          => 'No PayPal payment method is enabled on this site. Please contact the administrator.',
+    'local_title'                => 'PayPal',
+    'local_subtitle'             => 'Continue to the secure PayPal payment page. Your order status updates automatically once the payment completes.',
+    'local_session_notice'       => 'This payment session is valid for :minutes minutes. Please do not pay from multiple tabs at the same time.',
+    'local_pay_now'              => 'Pay with PayPal',
+    'local_order_not_payable'    => 'This order cannot start a PayPal payment right now.',
+    'local_payment_start_failed' => 'PayPal payment could not be started. Please try again shortly or contact the merchant.',
+    'local_no_method'            => 'No PayPal payment method is enabled on this site. Please contact the administrator.',
+    'local_pay_with_card'        => 'Pay by credit or debit card',
 ];

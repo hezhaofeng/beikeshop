@@ -37,7 +37,9 @@ class PaypalBCallbackService
         if ($transaction->isLocal()) {
             return false;
         }
-        if (! in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired'], true)) {
+        // 终态之外只通知“已捕获待确认”：A 站需要据此锁住订单，不让买家重复付款。
+        if (! in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired'], true)
+            && ! $transaction->hasPendingCapture()) {
             return false;
         }
 

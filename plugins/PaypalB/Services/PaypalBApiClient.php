@@ -20,16 +20,13 @@ class PaypalBApiClient
         $this->baseUrl = $sandbox ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
     }
 
-    public function createOrder(
-        PaypalBTransaction $transaction,
-        string $returnUrl,
-        string $cancelUrl,
-        string $brandName,
-        array $orderItems = null
-    ): array {
+    /**
+     * 请求体由 PaypalBOrderPayload 按会话记录的格式生成；同一支付引用重试时沿用同一个幂等请求号。
+     */
+    public function createOrder(PaypalBTransaction $transaction, array $payload): array
+    {
         try {
             $headers  = ['PayPal-Request-Id' => substr(hash('sha256', (string) $transaction->reference . '-create'), 0, 38)];
-            $payload  = PaypalBOrderPayload::build($transaction, $returnUrl, $cancelUrl, $brandName, $orderItems);
             $response = $this->requestWithToken(fn (string $token): Response => Http::timeout($this->timeout)
                 ->acceptJson()
                 ->asJson()
@@ -67,6 +64,9 @@ class PaypalBApiClient
         return $this->response($response, 'PayPal 捕获订单失败。', true);
     }
 
+    /**
+     * $reference 是买家账单上的发票编号，与建单时保持一致；为空时不提交。
+     */
     public function refundCapture(
         string $captureId,
         string $requestId,
@@ -80,12 +80,14 @@ class PaypalBApiClient
             'PayPal-Request-Id' => $requestId,
         ];
         $payload = [
-            'amount'     => [
+            'amount' => [
                 'value'         => PaypalBMoney::normalize($amount, $currency),
                 'currency_code' => strtoupper($currency),
             ],
-            'invoice_id' => $reference,
         ];
+        if (trim($reference) !== '') {
+            $payload['invoice_id'] = trim($reference);
+        }
         if ($noteToPayer !== null && trim($noteToPayer) !== '') {
             $payload['note_to_payer'] = mb_substr(trim($noteToPayer), 0, 255);
         }
@@ -171,6 +173,97 @@ class PaypalBApiClient
         }
 
         return $response->json('verification_status') === 'SUCCESS';
+    }
+
+    /**
+     * 当前应用已登记的全部 Webhook。返回 PayPal 原始结构，webhooks 键下是列表。
+     */
+    public function listWebhooks(): array
+    {
+        try {
+            $response = $this->requestWithToken(fn (string $token): Response => Http::timeout($this->timeout)
+                ->acceptJson()
+                ->withToken($token)
+                ->get($this->baseUrl . '/v1/notifications/webhooks'));
+        } catch (ConnectionException $exception) {
+            throw PaypalBApiException::connection('连接 PayPal Webhook 列表接口失败。', $exception);
+        }
+
+        return $this->response($response, 'PayPal Webhook 列表读取失败。');
+    }
+
+    /**
+     * PayPal 当前支持订阅的事件类型；注册前先取交集，避免一个不存在的事件名让整个请求被拒。
+     */
+    public function listWebhookEventTypes(): array
+    {
+        try {
+            $response = $this->requestWithToken(fn (string $token): Response => Http::timeout($this->timeout)
+                ->acceptJson()
+                ->withToken($token)
+                ->get($this->baseUrl . '/v1/notifications/webhooks-event-types'));
+        } catch (ConnectionException $exception) {
+            throw PaypalBApiException::connection('连接 PayPal 事件类型接口失败。', $exception);
+        }
+
+        return $this->response($response, 'PayPal 事件类型读取失败。');
+    }
+
+    /**
+     * @param array<int, string> $eventTypes
+     */
+    public function createWebhook(string $url, array $eventTypes): array
+    {
+        try {
+            $response = $this->requestWithToken(fn (string $token): Response => Http::timeout($this->timeout)
+                ->acceptJson()
+                ->asJson()
+                ->withToken($token)
+                ->post($this->baseUrl . '/v1/notifications/webhooks', [
+                    'url'         => $url,
+                    'event_types' => self::eventTypePayload($eventTypes),
+                ]));
+        } catch (ConnectionException $exception) {
+            throw PaypalBApiException::connection('连接 PayPal 创建 Webhook 接口失败。', $exception);
+        }
+
+        return $this->response($response, 'PayPal 创建 Webhook 失败。');
+    }
+
+    /**
+     * 整体替换已有 Webhook 的事件列表；PayPal 的 PATCH 只接受 JSON Patch 数组。
+     *
+     * @param array<int, string> $eventTypes
+     */
+    public function replaceWebhookEventTypes(string $webhookId, array $eventTypes): array
+    {
+        try {
+            $response = $this->requestWithToken(fn (string $token): Response => Http::timeout($this->timeout)
+                ->acceptJson()
+                ->asJson()
+                ->withToken($token)
+                ->patch($this->baseUrl . '/v1/notifications/webhooks/' . rawurlencode($webhookId), [[
+                    'op'    => 'replace',
+                    'path'  => '/event_types',
+                    'value' => self::eventTypePayload($eventTypes),
+                ]]));
+        } catch (ConnectionException $exception) {
+            throw PaypalBApiException::connection('连接 PayPal 更新 Webhook 接口失败。', $exception);
+        }
+
+        return $this->response($response, 'PayPal 更新 Webhook 事件失败。');
+    }
+
+    /**
+     * @param array<int, string> $eventTypes
+     * @return array<int, array{name: string}>
+     */
+    private static function eventTypePayload(array $eventTypes): array
+    {
+        return array_values(array_map(
+            static fn (string $name): array => ['name' => $name],
+            array_values(array_unique(array_filter(array_map('strval', $eventTypes))))
+        ));
     }
 
     private function requestWithToken(callable $request): Response

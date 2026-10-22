@@ -2,11 +2,11 @@
 
 namespace Plugin\PaypalB\Controllers;
 
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Plugin\PaypalB\Jobs\PaypalBWebhookJob;
@@ -15,43 +15,25 @@ use Plugin\PaypalB\Models\PaypalBTransaction;
 use Plugin\PaypalB\Models\PaypalBWebhookEvent;
 use Plugin\PaypalB\Services\BridgeSignature;
 use Plugin\PaypalB\Services\PaypalBApiClient;
+use Plugin\PaypalB\Services\PaypalBCallbackService;
 use Plugin\PaypalB\Services\PaypalBConfiguration;
+use Plugin\PaypalB\Services\PaypalBLocale;
+use Plugin\PaypalB\Services\PaypalBShopOrderService;
 use Plugin\PaypalB\Services\PaypalBTransactionService;
 
 class PaypalBController
 {
     public function createSession(Request $request): JsonResponse
     {
-        $payload = $request->json()->all();
-        if (! is_array($payload) || $payload === []) {
-            $payload = $request->all();
-        }
+        $payload = $this->jsonPayload($request);
 
-        try {
-            $configuration = PaypalBConfiguration::all();
-            BridgeSignature::verify(
-                $payload,
-                (string) $request->header(BridgeSignature::HEADER_TIMESTAMP, ''),
-                (string) $request->header(BridgeSignature::HEADER_NONCE, ''),
-                (string) $request->header(BridgeSignature::HEADER_SIGNATURE, ''),
-                $configuration['a_request_verification_secret'],
-                'paypal_b:a_request'
-            );
-
-            $transaction = app(PaypalBTransactionService::class)->create($payload);
-
-            return $this->signedJson(app(PaypalBTransactionService::class)->statusPayload($transaction));
-        } catch (ValidationException $exception) {
-            return response()->json(['message' => $exception->getMessage(), 'errors' => $exception->errors()], 422);
-        } catch (QueryException $exception) {
-            report($exception);
-
-            return response()->json(['message' => 'B 站支付服务尚未完成数据库迁移，请执行 php artisan migrate --force。'], 503);
-        } catch (\Throwable $exception) {
-            report($exception);
-
-            return response()->json(['message' => 'B 站 PayPal 会话创建失败。'], 500);
-        }
+        return $this->bridgeResponse(
+            $request,
+            $payload,
+            'paypal_b:a_request',
+            'B 站 PayPal 会话创建失败。',
+            static fn (PaypalBTransactionService $service): PaypalBTransaction => $service->create($payload)
+        );
     }
 
     public function status(Request $request, string $transactionId): JsonResponse
@@ -61,67 +43,37 @@ class PaypalBController
             'reference'      => trim((string) $request->query('reference', '')),
         ];
 
-        try {
-            $configuration = PaypalBConfiguration::all();
-            BridgeSignature::verify(
-                $payload,
-                (string) $request->header(BridgeSignature::HEADER_TIMESTAMP, ''),
-                (string) $request->header(BridgeSignature::HEADER_NONCE, ''),
-                (string) $request->header(BridgeSignature::HEADER_SIGNATURE, ''),
-                $configuration['a_request_verification_secret'],
-                'paypal_b:a_status'
-            );
-            $transaction = PaypalBTransaction::query()->where('transaction_id', $transactionId)->firstOrFail();
-            if ($payload['reference'] !== $transaction->reference) {
-                throw ValidationException::withMessages(['reference' => 'A 站支付引用与 B 站会话不一致。']);
+        return $this->bridgeResponse(
+            $request,
+            $payload,
+            'paypal_b:a_status',
+            'B 站支付状态读取失败。',
+            static function () use ($transactionId, $payload): PaypalBTransaction {
+                $transaction = PaypalBTransaction::query()->where('transaction_id', $transactionId)->firstOrFail();
+                if ($payload['reference'] !== $transaction->reference) {
+                    throw ValidationException::withMessages(['reference' => 'A 站支付引用与 B 站会话不一致。']);
+                }
+
+                return $transaction;
             }
-
-            return $this->signedJson(app(PaypalBTransactionService::class)->statusPayload($transaction));
-        } catch (ValidationException $exception) {
-            return response()->json(['message' => $exception->getMessage(), 'errors' => $exception->errors()], 422);
-        } catch (QueryException $exception) {
-            report($exception);
-
-            return response()->json(['message' => 'B 站支付服务尚未完成数据库迁移，请执行 php artisan migrate --force。'], 503);
-        } catch (\Throwable $exception) {
-            report($exception);
-
-            return response()->json(['message' => 'B 站支付状态读取失败。'], 500);
-        }
+        );
     }
 
     public function syncFulfillment(Request $request, string $transactionId): JsonResponse
     {
-        $payload = $request->json()->all();
-        if (! is_array($payload) || $payload === []) {
-            $payload = $request->all();
-        }
+        $payload = $this->jsonPayload($request);
 
-        try {
-            $configuration = PaypalBConfiguration::all();
-            BridgeSignature::verify(
-                $payload,
-                (string) $request->header(BridgeSignature::HEADER_TIMESTAMP, ''),
-                (string) $request->header(BridgeSignature::HEADER_NONCE, ''),
-                (string) $request->header(BridgeSignature::HEADER_SIGNATURE, ''),
-                $configuration['a_request_verification_secret'],
-                'paypal_b:a_fulfillment'
-            );
-            $transaction = PaypalBTransaction::query()->where('transaction_id', $transactionId)->firstOrFail();
-            app(PaypalBTransactionService::class)->syncFulfillment($transaction, $payload);
+        return $this->bridgeResponse(
+            $request,
+            $payload,
+            'paypal_b:a_fulfillment',
+            'B 站履约证据同步失败。',
+            static function (PaypalBTransactionService $service) use ($transactionId, $payload): PaypalBTransaction {
+                $transaction = PaypalBTransaction::query()->where('transaction_id', $transactionId)->firstOrFail();
 
-            return $this->signedJson(app(PaypalBTransactionService::class)->statusPayload($transaction->fresh()));
-        } catch (ValidationException $exception) {
-            return response()->json(['message' => $exception->getMessage(), 'errors' => $exception->errors()], 422);
-        } catch (QueryException $exception) {
-            report($exception);
-
-            return response()->json(['message' => 'B 站支付服务尚未完成数据库迁移，请执行 php artisan migrate --force。'], 503);
-        } catch (\Throwable $exception) {
-            report($exception);
-
-            return response()->json(['message' => 'B 站履约证据同步失败。'], 500);
-        }
+                return $service->syncFulfillment($transaction, $payload);
+            }
+        );
     }
 
     public function checkout(string $token)
@@ -145,6 +97,10 @@ class PaypalBController
             if (in_array($transaction->status, ['cancelled', 'failed', 'expired'], true)) {
                 throw ValidationException::withMessages(['payment' => trans('PaypalB::common.session_ended')]);
             }
+            if ($transaction->hasPendingCapture()) {
+                // 买家已付款、PayPal 尚在确认：再渲染按钮只会让买家再付一次。
+                throw ValidationException::withMessages(['payment' => trans('PaypalB::common.session_capture_pending')]);
+            }
             if ($method === 'card') {
                 if (! $transaction->account || ! $transaction->account->usesApi()) {
                     throw ValidationException::withMessages(['payment' => trans('PaypalB::common.card_not_supported')]);
@@ -160,7 +116,7 @@ class PaypalBController
                     'capture_token'  => $service->captureToken($transaction),
                     'checkout_items' => $service->checkoutItems($transaction),
                     'merchant'       => $merchant,
-                ]);
+                ], $transaction);
             }
             if ($transaction->mode !== 'automatic') {
                 $service->invalidateLegacySession($transaction, 'manual_collection_disabled');
@@ -177,10 +133,12 @@ class PaypalBController
                 'return_url'     => $this->finishUrl($transaction),
                 'checkout_items' => $service->checkoutItems($transaction),
                 'merchant'       => $merchant,
-            ]);
+            ], $transaction);
         } catch (ValidationException $exception) {
             $fallbackUrl = null;
-            if ($method === 'card' && ! in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired', 'reconciling'], true)) {
+            if ($method === 'card'
+                && ! $transaction->hasPendingCapture()
+                && ! in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired', 'reconciling'], true)) {
                 try {
                     $service->assertCheckoutMethod($transaction, 'wallet');
                     $fallbackUrl = $service->checkoutUrl($transaction, 'wallet');
@@ -194,7 +152,9 @@ class PaypalBController
                 'merchant'     => $merchant,
                 'fallback_url' => $fallbackUrl,
                 'return_url'   => $this->finishUrl($transaction),
-            ]);
+                // 内嵌时把会话终态（已付款待确认、已结束等）也通知父页，A 站据此拉取真实状态。
+                'embed_event'  => $transaction->hasPendingCapture() ? 'pending_capture' : 'ended',
+            ], $transaction);
         }
     }
 
@@ -329,7 +289,8 @@ class PaypalBController
             $cancelled = $transaction->status === 'cancelled';
         }
         if ($cancelled) {
-            app(\Plugin\PaypalB\Services\PaypalBCallbackService::class)->queue($transaction->fresh());
+            app(PaypalBCallbackService::class)->queue($transaction->fresh());
+            app(PaypalBShopOrderService::class)->cancelFromTransaction($transaction->fresh(), 'buyer_cancelled');
         }
 
         $response = redirect()->away($this->aReturnUrl($transaction));
@@ -344,15 +305,61 @@ class PaypalBController
      *
      * 不校验支付状态：无论成功、取消还是失败，买家都应当能回到 A 站，
      * 由 A 站的 returned() 查询真实状态并给出对应提示。
+     *
+     * 内嵌会话在 iframe 里 302 到 A 站只会得到一个被 A 站自己拒绝嵌入的页中页，
+     * 因此改为渲染一个只做 postMessage 的小页面，由 A 站父页拉取状态后顶层跳转；
+     * 页面被直接以顶层打开（降级为跳转模式）时，脚本会自行跳到 A 站回跳地址。
      */
-    public function finish(string $token): RedirectResponse
+    public function finish(string $token): RedirectResponse|Response
     {
         $transaction = PaypalBTransaction::query()->where('public_token', $token)->firstOrFail();
         $this->applyBuyerLocale($transaction);
 
+        if ($this->embedOrigin($transaction) !== '') {
+            return $this->checkoutView('PaypalB::checkout.embedded_finish', [
+                'return_url'  => $this->aReturnUrl($transaction),
+                'embed_event' => match (true) {
+                    (string) $transaction->status === 'completed' => 'completed',
+                    $transaction->hasPendingCapture()             => 'pending_capture',
+                    default                                       => 'ended',
+                },
+            ], $transaction);
+        }
+
         $response = redirect()->away($this->aReturnUrl($transaction));
         $response->headers->set('Referrer-Policy', 'no-referrer');
         // 302 被浏览器或中间层缓存后，买家再次访问会跳到过期的回跳地址。
+        $response->headers->set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+
+        return $response;
+    }
+
+    /**
+     * 本地 B 站订单从 PayPal 回来时，浏览器可能已不带原商城会话（例如配置的
+     * public_url 使用了不同的主机名）。以不可猜测的交易 token 恢复该订单的
+     * 游客授权，再交回核心订单页；不把邮箱等个人信息写进 URL。
+     *
+     * 已捕获待确认（Payment Review、eCheck）的交易同样进成功页：买家已经付了款，
+     * 送回支付页只会看到“请勿重复付款”的提示，却没有任何查看订单的入口。
+     */
+    public function localReturn(string $token): RedirectResponse
+    {
+        $transaction = PaypalBTransaction::query()
+            ->where('public_token', $token)
+            ->where('source', PaypalBTransaction::SOURCE_LOCAL)
+            ->firstOrFail();
+
+        $orderNumber = (string) $transaction->order_number;
+        if (! in_array($orderNumber, array_map('strval', (array) session('guest_order_numbers', [])), true)) {
+            session()->push('guest_order_numbers', $orderNumber);
+        }
+
+        $target = $transaction->status === 'completed' || $transaction->hasPendingCapture()
+            ? shop_route('checkout.success', ['order_number' => (string) $transaction->order_number], false)
+            : shop_route('orders.pay', ['number' => (string) $transaction->order_number], false);
+
+        $response = redirect()->to($target);
+        $response->headers->set('Referrer-Policy', 'no-referrer');
         $response->headers->set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
 
         return $response;
@@ -438,18 +445,7 @@ class PaypalBController
      */
     private function applyBuyerLocale(PaypalBTransaction $transaction): void
     {
-        $locale = trim((string) $transaction->buyer_locale);
-        if ($locale === '') {
-            return;
-        }
-
-        try {
-            if (in_array($locale, array_column(locales(), 'code'), true)) {
-                app()->setLocale($locale);
-            }
-        } catch (\Throwable) {
-            // 语言表不可读时保持默认语言，绝不阻断支付流程。
-        }
+        PaypalBLocale::activate($transaction->buyer_locale);
     }
 
     /**
@@ -457,47 +453,19 @@ class PaypalBController
      */
     private function applyRequestLocale(): void
     {
-        $locale = strtolower(trim((string) request()->query('lang', '')));
-        if (preg_match('/^[a-z]{2}(?:_[a-z]{2})?$/', $locale) !== 1) {
-            return;
-        }
-
-        try {
-            if (in_array($locale, array_column(locales(), 'code'), true)) {
-                app()->setLocale($locale);
-            }
-        } catch (\Throwable) {
-            // 语言表不可读时保持默认语言。
-        }
+        PaypalBLocale::activate(request()->query('lang', ''));
     }
 
     /**
-     * PayPal SDK 与 HTML lang 都要求 xx-XX 形式，与站点的 zh_cn 写法不同。
+     * PayPal SDK 与 HTML lang 都要求带地区的形式，与站点的 zh_cn 写法不同。
      */
     private function localeViewData(): array
     {
-        $locale  = app()->getLocale();
-        $htmlTag = str_replace('_', '-', $locale);
-        $parts   = explode('-', $htmlTag);
-        $htmlTag = count($parts) === 2
-            ? strtolower($parts[0]) . '-' . strtoupper($parts[1])
-            : strtolower($parts[0]);
+        $locale = (string) app()->getLocale();
 
         return [
-            'html_lang'     => $htmlTag,
-            // PayPal 只接受带地区的语言标记，单段语言按其文档补齐常用地区。
-            'paypal_locale' => count($parts) === 2 ? str_replace('-', '_', $htmlTag) : match (strtolower($parts[0])) {
-                'zh'    => 'zh_CN',
-                'ja'    => 'ja_JP',
-                'ko'    => 'ko_KR',
-                'de'    => 'de_DE',
-                'fr'    => 'fr_FR',
-                'es'    => 'es_ES',
-                'it'    => 'it_IT',
-                'ru'    => 'ru_RU',
-                'id'    => 'id_ID',
-                default => 'en_US',
-            },
+            'html_lang'     => PaypalBLocale::htmlLang($locale),
+            'paypal_locale' => PaypalBLocale::paypalLocale($locale),
         ];
     }
 
@@ -523,9 +491,7 @@ class PaypalBController
     private function aReturnUrl(PaypalBTransaction $transaction): string
     {
         if ($transaction->isLocal()) {
-            return (string) $transaction->status === 'completed'
-                ? shop_route('checkout.success', ['order_number' => (string) $transaction->order_number], false)
-                : shop_route('orders.pay', ['number' => (string) $transaction->order_number], false);
+            return route('shop.paypal_b.local_return', ['token' => $transaction->public_token], false);
         }
 
         $configuration = PaypalBConfiguration::all();
@@ -533,38 +499,137 @@ class PaypalBController
         return rtrim($configuration['a_site_url'], '/') . '/paypal/return?reference=' . rawurlencode((string) $transaction->reference);
     }
 
-    private function checkoutView(string $view, array $data): Response
+    private function checkoutView(string $view, array $data, ?PaypalBTransaction $transaction = null): Response
     {
         $data += $this->localeViewData();
+        $data += $this->embedViewData($transaction);
 
         return response()->view($view, $data, 200, [
             'Cache-Control'           => 'no-store, private',
-            'Content-Security-Policy' => "frame-ancestors 'none'",
+            'Content-Security-Policy' => 'frame-ancestors ' . $this->frameAncestors($transaction),
             'Referrer-Policy'         => 'no-referrer',
         ]);
     }
 
-    private function signedJson(array $payload): JsonResponse
+    /**
+     * 只有落库为 embedded 的跨站会话、且后台仍允许内嵌时，才把 A 站 origin 放进 frame-ancestors；
+     * 其余一律 'none'。关闭开关后已建的内嵌会话会立刻无法嵌入，由 A 站的加载超时兜底降级。
+     */
+    private function frameAncestors(?PaypalBTransaction $transaction): string
     {
-        $configuration = PaypalBConfiguration::all();
-        $headers       = BridgeSignature::headers($payload, $configuration['a_callback_signing_secret']);
+        $origin = $this->embedOrigin($transaction);
 
-        return response()->json($payload, 200, $headers);
+        return $origin === '' ? "'none'" : $origin;
+    }
+
+    private function embedOrigin(?PaypalBTransaction $transaction): string
+    {
+        if (! $transaction || ! $transaction->isEmbedded()) {
+            return '';
+        }
+
+        try {
+            $configuration = PaypalBConfiguration::all();
+        } catch (ValidationException) {
+            return '';
+        }
+
+        return empty($configuration['embedded_enabled']) ? '' : (string) $configuration['a_site_origin'];
+    }
+
+    /**
+     * 布局据此切换为无品牌头、透明背景的内嵌形态，并只向这个 origin 发送 postMessage。
+     */
+    private function embedViewData(?PaypalBTransaction $transaction): array
+    {
+        $origin = $this->embedOrigin($transaction);
+
+        return [
+            'embedded'      => $origin !== '',
+            'embed_origin'  => $origin,
+            'embed_reference' => $origin !== '' ? (string) $transaction->reference : '',
+        ];
+    }
+
+    /**
+     * A→B 三个接口共用的骨架：桥接开关、HMAC 验签、统一错误映射和带签名的响应。
+     * 处理器收到已解析的交易服务，返回本次要回签给 A 站状态的交易。
+     */
+    private function bridgeResponse(Request $request, array $payload, string $scope, string $failureMessage, \Closure $handler): JsonResponse
+    {
+        try {
+            $configuration = PaypalBConfiguration::all();
+            $this->assertBridgeEnabled($configuration);
+            BridgeSignature::verify(
+                $payload,
+                (string) $request->header(BridgeSignature::HEADER_TIMESTAMP, ''),
+                (string) $request->header(BridgeSignature::HEADER_NONCE, ''),
+                (string) $request->header(BridgeSignature::HEADER_SIGNATURE, ''),
+                $configuration['a_request_verification_secret'],
+                $scope
+            );
+
+            $service     = app(PaypalBTransactionService::class);
+            $transaction = $handler($service);
+
+            return $this->signedJson($service->statusPayload($transaction), $configuration);
+        } catch (ValidationException $exception) {
+            return response()->json(['message' => $exception->getMessage(), 'errors' => $exception->errors()], 422);
+        } catch (QueryException $exception) {
+            report($exception);
+
+            return response()->json(['message' => 'B 站支付服务尚未完成数据库迁移，请执行 php artisan migrate --force。'], 503);
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return response()->json(['message' => $failureMessage], 500);
+        }
+    }
+
+    /**
+     * A 站以 JSON 提交；兼容表单编码的旧客户端。
+     */
+    private function jsonPayload(Request $request): array
+    {
+        $payload = $request->json()->all();
+        if (! is_array($payload) || $payload === []) {
+            $payload = $request->all();
+        }
+
+        return is_array($payload) ? $payload : [];
+    }
+
+    private function signedJson(array $payload, array $configuration): JsonResponse
+    {
+        return response()->json($payload, 200, BridgeSignature::headers($payload, $configuration['a_callback_signing_secret']));
+    }
+
+    private function assertBridgeEnabled(array $configuration): void
+    {
+        if (empty($configuration['bridge_enabled'])) {
+            throw ValidationException::withMessages([
+                'bridge' => 'PaypalB 当前仅启用 B 站本地支付，未启用 A/B 跨站支付。',
+            ]);
+        }
     }
 
     private function merchantPresentation(array $configuration): array
     {
         // 政策页没有支付会话可依据，语言只能随链接传递，否则买家会跳到 B 站默认语言页面。
         $lang = ['lang' => app()->getLocale()];
+        // 后台配置了同域条款地址时优先使用，留空则回退到插件内置政策页。
+        $policyUrl = static function (string $configured, string $routeName) use ($lang): string {
+            return $configured !== '' ? $configured : route($routeName, $lang, false);
+        };
 
         return [
             'display_name'  => $configuration['merchant_display_name'],
             'support_email' => $configuration['customer_service_email'],
             'contact_url'   => route('shop.paypal_b.contact', $lang, false),
             'support_phone' => $configuration['customer_service_phone'],
-            'refund_url'    => route('shop.paypal_b.refunds', $lang, false),
-            'privacy_url'   => route('shop.paypal_b.privacy', $lang, false),
-            'terms_url'     => route('shop.paypal_b.terms', $lang, false),
+            'refund_url'    => $policyUrl((string) ($configuration['refund_policy_url'] ?? ''), 'shop.paypal_b.refunds'),
+            'privacy_url'   => $policyUrl((string) ($configuration['privacy_policy_url'] ?? ''), 'shop.paypal_b.privacy'),
+            'terms_url'     => $policyUrl((string) ($configuration['terms_url'] ?? ''), 'shop.paypal_b.terms'),
         ];
     }
 

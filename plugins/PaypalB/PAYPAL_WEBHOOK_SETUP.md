@@ -1,8 +1,23 @@
-# PayPal Sandbox / Live Webhook 点击清单
+# PayPal Sandbox / Live Webhook 配置清单
 
-这份清单的目标很简单：为 `PaypalB` 的每个自动收款账号，在对应环境的 PayPal 后台创建一个 Webhook，拿到 `Webhook ID` 后回填到 B 站账号配置。
+为 `PaypalB` 的每个自动收款账号，在对应环境的 PayPal 上登记一个 Webhook，并把 `Webhook ID` 保存到 B 站账号配置。有两种方式：推荐自动注册，手动创建作为备用。
 
 注意：Sandbox 和 Live 必须分开创建、分开保存、分开验证，不能混用。
+
+## 方式一：自动注册（推荐）
+
+前提：插件配置里的 B 站公网地址必须是 HTTPS（PayPal 不接受 HTTP 的 Webhook 地址），账号已填写正确的 Client ID 和 Secret，且插件配置的 PayPal 环境与凭据所属环境一致。
+
+- 新增账号时保持“保存后自动在 PayPal 注册 Webhook”勾选，保存即完成：系统先落库拿到账号 ID，再用该账号凭据调用 PayPal 接口创建 Webhook，把返回的 Webhook ID 写回账号。若新增时勾选了“启用账号”，注册成功后会直接启用。
+- 已有账号在“收款账号与交易管理”列表中点击“自动注册 Webhook”。PayPal 上已存在指向同一地址（含旧路径 `/api/paypal-b/webhooks/{账号ID}`）的 Webhook 时会直接复用其 ID，并补齐缺少的事件订阅，不会重复创建。
+- 切换 Sandbox/Live 环境并更换凭据后，再点一次“重新注册 Webhook”即可为新环境登记。
+- 注册失败时账号仍会保留（新增账号为停用状态），页面会显示 PayPal 返回的原因；修正后重试即可。
+
+自动注册订阅的事件与下文手动清单一致；PayPal 当前不提供的事件会被跳过并在提示里列出。
+
+## 方式二：手动创建
+
+以下为在 PayPal 开发者后台手动创建的点击清单。
 
 ## 先准备
 
@@ -42,6 +57,8 @@
 8. 在事件列表里勾选下面这些事件：
 
    - `PAYMENT.CAPTURE.COMPLETED`
+   - `PAYMENT.CAPTURE.PENDING`
+   - `PAYMENT.CAPTURE.DENIED`
    - `PAYMENT.CAPTURE.REFUNDED`
    - `PAYMENT.CAPTURE.REVERSED`
    - `CUSTOMER.DISPUTE.CREATED`
@@ -95,6 +112,8 @@ Live 的点法和 Sandbox 完全一样，差别只有两个：
 8. 勾选和 Sandbox 相同的一组事件：
 
    - `PAYMENT.CAPTURE.COMPLETED`
+   - `PAYMENT.CAPTURE.PENDING`
+   - `PAYMENT.CAPTURE.DENIED`
    - `PAYMENT.CAPTURE.REFUNDED`
    - `PAYMENT.CAPTURE.REVERSED`
    - `CUSTOMER.DISPUTE.CREATED`
@@ -125,6 +144,7 @@ Live 的点法和 Sandbox 完全一样，差别只有两个：
 - 不要把 Sandbox 的 `Webhook ID` 填到 Live 账号里。
 - 不要把 Live 的 `Webhook ID` 填到 Sandbox 账号里。
 - 不要漏掉 `PAYMENT.CAPTURE.COMPLETED`，否则支付成功后的状态同步会断。
+- 不要漏掉 `PAYMENT.CAPTURE.PENDING` 和 `PAYMENT.CAPTURE.DENIED`，否则被审核或用电子支票支付的订单在 PayPal 退票时会一直停在待确认。
 - 不要只勾退款事件，争议事件也要勾。
 - 不要在 B 站还没配置 `public_url` 时去复制 webhook 地址。
 

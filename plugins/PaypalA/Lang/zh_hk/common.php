@@ -25,9 +25,19 @@ return [
     'gateway_unreadable'   => '暫時無法讀取 PayPal 支付狀態，請稍後重試。',
 
     // 回跳後的狀態提示
-    'status_cancelled'   => '已取消 PayPal 支付，訂單仍可重新付款。',
-    'status_failed'      => 'PayPal 支付未完成，訂單仍可重新付款。',
-    'status_expired'     => '支付工作階段已過期，請重新發起付款。',
-    'status_reconciling' => 'PayPal 建立結果正在確認，請勿重複付款，稍後再試。',
-    'status_pending'     => '支付尚未完成，請在支付頁完成付款後返回。',
+    'status_cancelled'       => '已取消 PayPal 支付，訂單仍可重新付款。',
+    'status_failed'          => 'PayPal 支付未完成，訂單仍可重新付款。',
+    'status_expired'         => '支付工作階段已過期，請重新發起付款。',
+    'status_reconciling'     => 'PayPal 建立結果正在確認，請勿重複付款，稍後再試。',
+    'status_pending'         => '支付尚未完成，請在支付頁完成付款後返回。',
+    'status_capture_pending' => 'PayPal 已受理您的付款，正在等待 PayPal 確認，請勿重複付款；確認後訂單會自動更新。',
+    'capture_pending_notice' => 'PayPal 已受理您的付款，正在確認中。請勿重複付款，PayPal 確認後本頁會自動顯示已支付。',
+
+    // 內嵌支付
+    'embedded_loading'       => '正在載入 PayPal…',
+    'embedded_unavailable'   => 'PayPal 暫時不可用，請稍後重試或選擇其他支付方式。',
+    'embedded_not_allowed'   => '支付閘道未啟用內嵌 PayPal 結帳，請聯絡商家。',
+    'embedded_retry'         => '重試',
+    'embedded_redirecting'   => '正在前往 PayPal 安全支付頁…',
+    'embedded_confirming'    => '正在確認您的付款…',
 ];

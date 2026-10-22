@@ -5,6 +5,8 @@ namespace Plugin\PaypalA;
 use Beike\Models\Order;
 use Beike\Services\StateMachineService;
 use Illuminate\Console\Application as ConsoleApplication;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Plugin\PaypalA\Console\DispatchPaypalAFulfillment;
 use Plugin\PaypalA\Services\PaypalAFulfillmentService;
 use Plugin\PaypalA\Services\PaypalAPaymentService;
@@ -94,7 +96,14 @@ class Bootstrap
                 return;
             }
 
-            PaypalAPaymentService::bridgeConfiguration(plugin_setting(PaypalAPaymentService::CODE, []));
+            try {
+                PaypalAPaymentService::bridgeConfiguration(plugin_setting(PaypalAPaymentService::CODE, []));
+            } catch (ValidationException $exception) {
+                // 配置细节只进日志，买家看到的是通用提示。
+                Log::warning('PaypalA 结账校验失败：插件配置无效。', ['errors' => $exception->errors()]);
+
+                throw ValidationException::withMessages(['payment' => trans('PaypalA::common.start_failed')]);
+            }
         });
     }
 

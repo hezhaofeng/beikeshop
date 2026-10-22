@@ -78,6 +78,38 @@ return [
         'description' => '映射模式使用 CyberCloak 当前已发布且已确认的商品映射，仅替换提交给 PayPal 的商品名称和 SKU；价格、数量、币种和本地订单保持不变。',
     ],
     [
+        'name'        => 'checkout_mode',
+        'label'       => '支付页形态',
+        'type'        => 'select',
+        'options'     => [
+            ['value' => 'redirect', 'label' => '跳转到 B 站托管页'],
+            ['value' => 'embedded', 'label' => '在 A 站支付页内嵌 B 站结账页'],
+        ],
+        'required'    => false,
+        'rules'       => ['nullable', 'in:redirect,embedded'],
+        'description' => '内嵌模式下买家停留在 A 站页面，PayPal 按钮由 iframe 中的 B 站结账页提供；需要 B 站开启“允许 A 站内嵌支付页”。',
+    ],
+    [
+        'name'        => 'embedded_fallback',
+        'label'       => '内嵌失败时自动降级为跳转',
+        'type'        => 'select',
+        'options'     => [
+            ['value' => '1', 'label' => '开启'],
+            ['value' => '0', 'label' => '关闭'],
+        ],
+        'required'    => false,
+        'rules'       => ['nullable', 'boolean'],
+        'description' => '开启：B 站拒绝内嵌、iframe 加载超时或 PayPal 组件加载失败时，自动改为顶层跳转到 B 站托管页。关闭：原地提示暂不可用并提供重试。',
+    ],
+    [
+        'name'        => 'embedded_ready_timeout_seconds',
+        'label'       => '内嵌就绪超时',
+        'type'        => 'string',
+        'required'    => false,
+        'rules'       => ['nullable', 'integer', 'min:5', 'max:20'],
+        'description' => '单位：秒。iframe 在此时间内未报告就绪即视为内嵌失败。',
+    ],
+    [
         'name'        => 'request_timeout_seconds',
         'label'       => 'B 站请求超时',
         'type'        => 'string',

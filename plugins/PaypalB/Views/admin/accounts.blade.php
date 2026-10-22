@@ -43,8 +43,13 @@
                 @if($account->usesApi())
                   @if($webhook_base_url)
                     <div class="small text-secondary text-break">Webhook: <code>{{ $webhook_base_url }}{{ $account->id }}</code></div>
+                    <div class="small text-secondary">Webhook ID: <code>{{ $account->webhook_id ?: '未填写' }}</code></div>
+                    <form method="POST" action="{{ admin_route('paypal_b.accounts.register_webhook', ['account' => $account]) }}" class="mt-1" onsubmit="return confirm('将使用该账号的 API 凭据在 PayPal 创建或复用 Webhook，并把 Webhook ID 写回账号。继续？')">
+                      @csrf
+                      <button class="btn btn-sm btn-outline-success" type="submit">{{ $account->webhook_id ? '重新注册 Webhook' : '自动注册 Webhook' }}</button>
+                    </form>
                   @else
-                    <div class="small text-warning">请先在插件配置中保存 B 站公网地址，再复制 Webhook 地址。</div>
+                    <div class="small text-warning">请先在插件配置中保存 B 站公网地址，再注册或复制 Webhook 地址。</div>
                   @endif
                 @endif
               </td>
@@ -70,7 +75,7 @@
   </div>
 
   <div class="card">
-    <div class="card-header"><h6 class="card-title mb-0">跨站支付会话</h6></div>
+    <div class="card-header"><h6 class="card-title mb-0">支付会话</h6></div>
     <div class="card-body p-0">
       <div class="table-responsive">
         <table class="table align-middle mb-0">
@@ -78,7 +83,22 @@
           <tbody>
           @forelse($transactions as $transaction)
             <tr>
-              <td><code>{{ $transaction->reference }}</code><div class="small text-secondary">{{ $transaction->order_number }}</div></td>
+              <td>
+                <code>{{ $transaction->reference }}</code>
+                <div class="small text-secondary">{{ $transaction->order_number }}</div>
+                {{-- 本站订单没有 A 站回调，后台核对时必须一眼区分两类会话。 --}}
+                <span class="badge {{ $transaction->isLocal() ? 'bg-info' : 'bg-secondary' }}">{{ $transaction->isLocal() ? '本站订单' : '跨站订单' }}</span>
+                @if($transaction->isEmbedded())
+                  <span class="badge bg-light text-dark border">内嵌</span>
+                @endif
+                @if($transaction->shop_order_id)
+                  <div class="small"><a href="{{ admin_route('orders.show', ['order' => $transaction->shop_order_id]) }}">镜像订单 #{{ $transaction->shop_order_id }}</a></div>
+                @endif
+                @if(in_array(\Plugin\PaypalB\Services\PaypalBShopOrderService::RISK_FLAG_UNMAPPED, (array) $transaction->risk_flags, true))
+                  {{-- 有商品行没匹配到本站目录：镜像订单里这些行 product_id 为 0，需人工核对。 --}}
+                  <span class="badge bg-warning text-dark" title="部分商品未匹配到本站目录">未匹配商品</span>
+                @endif
+              </td>
               <td>
                 <details>
                   <summary>{{ count((array) $transaction->order_items) }} 个商品，{{ count((array) data_get($transaction->fulfillment_evidence, 'shipments', [])) }} 个运单</summary>
@@ -91,12 +111,30 @@
                   @if(data_get($transaction->fulfillment_evidence, 'delivery_evidence.delivered_at'))
                     <div class="small text-success">签收：{{ data_get($transaction->fulfillment_evidence, 'delivery_evidence.delivered_at') }}</div>
                   @endif
+                  @if($transaction->paypalShippingSummary() !== '')
+                    {{-- 兼容模式下买家在 PayPal 自选地址，卖家保障只认这个地址；与商城订单不一致必须醒目提示。 --}}
+                    <div class="small {{ $transaction->paypalShippingMatchesOrder() === false ? 'text-danger' : 'text-secondary' }}">
+                      PayPal 收货地址：{{ $transaction->paypalShippingSummary() }}
+                      @if($transaction->paypalShippingMatchesOrder() === false)
+                        （与商城订单地址不一致，卖家保障以此地址为准）
+                      @endif
+                    </div>
+                  @endif
                 </details>
               </td>
               <td>{{ $transaction->amount }} {{ $transaction->currency }}</td>
               <td>{{ $transaction->account?->name ?: '-' }}</td>
               <td>
                 <div>{{ $transaction->status }}</div>
+                @if($transaction->provider_status)
+                  {{-- PayPal 侧的捕获状态与原因：待处理时管理员必须能直接看到是审核、电子支票还是需要人工接受。 --}}
+                  <div class="small {{ $transaction->hasPendingCapture() ? 'text-warning' : 'text-secondary' }}">
+                    PayPal：{{ $transaction->provider_status }}
+                    @if($transaction->pendingReason() !== '')（{{ $transaction->pendingReason() }}）@endif
+                    @if($transaction->sellerProtectionStatus() !== '')，卖家保障 {{ $transaction->sellerProtectionStatus() }}@endif
+                  </div>
+                @endif
+                <div class="small text-secondary">提交格式：{{ data_get($transaction->bridge_request, 'paypal_payload_mode') === 'native' ? '兼容模式（精简）' : '完整明细' }}</div>
                 <div class="small text-secondary">退款：{{ $transaction->refund_status ?: 'none' }} / {{ $transaction->refunded_amount ?: '0.0000' }} {{ $transaction->currency }}</div>
                 @if($transaction->dispute_status)<div class="small text-danger">争议：{{ $transaction->dispute_status }}</div>@endif
                 @if($transaction->refunds->isNotEmpty())
@@ -135,8 +173,11 @@
                     </form>
                   </details>
                 @endif
-                @if(in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired'], true))
+                @if(! $transaction->isLocal() && (in_array($transaction->status, ['completed', 'cancelled', 'failed', 'expired'], true) || $transaction->hasPendingCapture()))
                   <form method="POST" action="{{ admin_route('paypal_b.transactions.retry_callback', ['transaction' => $transaction]) }}" class="d-inline">@csrf<button class="btn btn-sm btn-outline-secondary" type="submit">重试回调</button></form>
+                @endif
+                @if($transaction->paypal_order_id && in_array($transaction->status, ['pending', 'creating'], true))
+                  <form method="POST" action="{{ admin_route('paypal_b.transactions.sync', ['transaction' => $transaction]) }}" class="d-inline">@csrf<button class="btn btn-sm btn-outline-warning" type="submit">同步 PayPal 状态</button></form>
                 @endif
                 <details class="d-inline-block text-start">
                   <summary class="btn btn-sm btn-outline-primary">签收证据</summary>
@@ -152,7 +193,7 @@
               </td>
             </tr>
           @empty
-            <tr><td colspan="7" class="text-center text-secondary py-4">还没有跨站支付会话。</td></tr>
+            <tr><td colspan="7" class="text-center text-secondary py-4">还没有支付会话。</td></tr>
           @endforelse
           </tbody>
         </table>

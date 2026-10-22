@@ -48,7 +48,7 @@ class PaypalBLocalOrderService
                 if ($order->status === StateMachineService::UNPAID) {
                     StateMachineService::getInstance($order)
                         ->setPayment($payment)
-                        ->changeStatus(StateMachineService::PAID, 'PayPal 已确认收款。');
+                        ->changeStatus(StateMachineService::PAID, $transaction->paidComment('PayPal 已确认收款。'));
 
                     return;
                 }

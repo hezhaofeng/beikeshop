@@ -175,14 +175,18 @@ final class PaypalBRefundService
 
         try {
             $configuration = PaypalBConfiguration::all();
-            $provider      = (new PaypalBApiClient(
+            // 退款的发票编号沿用建单时的取值：兼容模式是订单号，完整明细模式是支付引用。
+            $invoiceReference = PaypalBOrderPayload::modeFor($transaction, $configuration) === PaypalBOrderPayload::MODE_NATIVE
+                ? (string) $transaction->order_number
+                : (string) $transaction->reference;
+            $provider = (new PaypalBApiClient(
                 $account,
                 (bool) $configuration['sandbox_mode'],
                 (int) $configuration['request_timeout_seconds']
             ))->refundCapture(
                 (string) $transaction->paypal_capture_id,
                 (string) $refund->request_id,
-                (string) $transaction->reference,
+                $invoiceReference,
                 (string) $refund->amount,
                 (string) $refund->currency,
                 $refund->note_to_payer

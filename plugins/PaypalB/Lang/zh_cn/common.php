@@ -45,11 +45,16 @@ return [
     'payment_accepted'    => 'PayPal 已接受付款，正在确认收款状态…',
     'payment_confirming'  => '付款仍在 PayPal 确认中，订单状态会在到账后自动更新。',
     'payment_not_done'    => 'PayPal 付款未能完成。',
+    'success_review_notice' => 'PayPal 已受理您的付款，正在审核中。审核完成前订单会显示为待支付，完成后将自动更新，请勿重复付款。',
 
     // 错误页
     'error_title'      => 'PayPal 支付暂不可用',
     'use_wallet'       => '改用 PayPal 钱包付款',
     'back_to_order'    => '返回订单',
+
+    // 内嵌收口页
+    'finish_title'     => '正在返回商店',
+    'finish_returning' => '正在带您返回商店…',
 
     // 收款状态消息
     'status_completed'   => 'PayPal 付款已完成。',
@@ -64,17 +69,19 @@ return [
     'capture_failed'     => 'PayPal 收款捕获失败，请稍后重试。',
 
     // 支付会话相关的买家提示
-    'session_ended'        => '该 PayPal 支付会话已经结束，请从原站点重新发起付款。',
-    'session_expired'      => '支付会话已过期。',
-    'session_processing'   => '该支付正在处理中，请稍后查询状态。',
-    'session_reconciling'  => 'PayPal 创建结果尚未确认，请稍后重试或联系商户处理。',
-    'session_unavailable'  => 'PayPal 授权地址暂不可用，请重新发起付款。',
-    'method_not_enabled'   => '该支付会话未启用此付款方式。',
-    'card_not_enabled'     => '本站当前未启用信用卡收款。',
-    'wallet_not_enabled'   => '本站当前未启用 PayPal 钱包收款。',
-    'card_not_supported'   => '当前 PayPal 收款账号不支持信用卡自动收款。',
-    'card_component_down'  => 'PayPal 信用卡组件暂时不可用，请改用 PayPal 钱包付款。',
-    'capture_token_invalid' => '支付捕获令牌无效，请从原站点重新发起付款。',
+    'session_ended'           => '该 PayPal 支付会话已经结束，请从原站点重新发起付款。',
+    'session_expired'         => '支付会话已过期。',
+    'session_processing'      => '该支付正在处理中，请稍后查询状态。',
+    'session_reconciling'     => 'PayPal 创建结果尚未确认，请稍后重试或联系商户处理。',
+    'session_unavailable'     => 'PayPal 授权地址暂不可用，请重新发起付款。',
+    'method_not_enabled'      => '该支付会话未启用此付款方式。',
+    'card_not_enabled'        => '本站当前未启用信用卡收款。',
+    'wallet_not_enabled'      => '本站当前未启用 PayPal 钱包收款。',
+    'card_not_supported'      => '当前 PayPal 收款账号不支持信用卡自动收款。',
+    'card_component_down'     => 'PayPal 信用卡组件暂时不可用，请改用 PayPal 钱包付款。',
+    'capture_token_invalid'   => '支付捕获令牌无效，请从原站点重新发起付款。',
+    'session_capture_pending' => 'PayPal 已受理本次付款，正在等待 PayPal 确认，请勿重复付款；确认后订单会自动更新。',
+    'capture_declined'        => 'PayPal 拒绝了本次付款，请更换付款方式或联系商户。',
 
     // 政策页正文
     'contact_title'     => '联系我们',
@@ -91,10 +98,12 @@ return [
     'terms_body_2'      => '支付前请阅读订单信息、退款政策、隐私政策和交易条款。',
 
     // B 站自营订单支付
-    'local_title'              => 'PayPal',
-    'local_subtitle'           => '点击下方按钮前往 PayPal 安全支付页完成付款。付款完成后，订单状态会自动更新。',
-    'local_session_notice'     => '支付会话有效期为 :minutes 分钟。请勿在多个页面同时付款。',
-    'local_pay_now'            => '使用 PayPal 付款',
-    'local_order_not_payable'  => '该订单当前不能发起 PayPal 支付。',
-    'local_no_method'          => '本站未启用任何 PayPal 收款方式，请联系管理员。',
+    'local_title'                => 'PayPal',
+    'local_subtitle'             => '点击下方按钮前往 PayPal 安全支付页完成付款。付款完成后，订单状态会自动更新。',
+    'local_session_notice'       => '支付会话有效期为 :minutes 分钟。请勿在多个页面同时付款。',
+    'local_pay_now'              => '使用 PayPal 付款',
+    'local_order_not_payable'    => '该订单当前不能发起 PayPal 支付。',
+    'local_payment_start_failed' => 'PayPal 支付暂时无法发起，请稍后重试或联系商家。',
+    'local_no_method'            => '本站未启用任何 PayPal 收款方式，请联系管理员。',
+    'local_pay_with_card'        => '使用信用卡/借记卡付款',
 ];

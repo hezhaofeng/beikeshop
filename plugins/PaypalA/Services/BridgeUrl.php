@@ -61,6 +61,25 @@ final class BridgeUrl
         return strtolower((string) ($parts['scheme'] ?? 'https')) === 'http' ? 80 : 443;
     }
 
+    /**
+     * 浏览器意义上的 origin（协议 + 主机 + 非默认端口），用于 postMessage 的来源校验。
+     */
+    public static function origin(string $url): string
+    {
+        $parts = parse_url($url);
+        if (! is_array($parts) || empty($parts['host'])) {
+            return '';
+        }
+
+        $scheme = strtolower((string) ($parts['scheme'] ?? 'https'));
+        $origin = $scheme . '://' . strtolower((string) $parts['host']);
+        if (isset($parts['port']) && (int) $parts['port'] !== ($scheme === 'http' ? 80 : 443)) {
+            $origin .= ':' . (int) $parts['port'];
+        }
+
+        return $origin;
+    }
+
     private static function localHttpAllowed(): bool
     {
         try {

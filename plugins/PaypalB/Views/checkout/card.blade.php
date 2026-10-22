@@ -36,11 +36,6 @@
 @section('title', trans('PaypalB::common.card_title'))
 
 @section('content')
-  <div class="text-center mb-4">
-    <h1 class="h4 mb-1">{{ trans('PaypalB::common.card_title') }}</h1>
-    <div class="text-secondary">{{ trans('PaypalB::common.card_subtitle') }}</div>
-  </div>
-
   @include('PaypalB::checkout.summary')
 
   <div id="paypal-card-message" class="alert d-none" role="alert"></div>
@@ -94,6 +89,11 @@
       const fail = (error, fallback) => {
         showMessage(error && error.message ? error.message : fallback);
         submit.disabled = false;
+        notify('failed');
+      };
+      // 内嵌时把关键节点告诉 A 站父页面；非内嵌时 PaypalBEmbed.send 是空操作。
+      const notify = (event) => {
+        if (window.PaypalBEmbed) window.PaypalBEmbed.send(event);
       };
 
       const post = async (url, body) => {
@@ -114,6 +114,7 @@
 
       const finish = (payload) => {
         showMessage(i18n.completed, 'success');
+        notify('completed');
         window.location.assign(returnUrl);
       };
 
@@ -145,10 +146,14 @@
         }
 
         showMessage(i18n.confirming, 'pending');
+        notify('pending_capture');
+        // 买家已付款、PayPal 仍在确认：送回原站点展示“等待确认”，不要留在支付页诱导重复付款。
+        setTimeout(() => window.location.assign(returnUrl), 3000);
       };
 
       if (!window.paypal || !window.paypal.CardFields) {
         fail(null, i18n.load_failed);
+        notify('load_failed');
         return;
       }
 

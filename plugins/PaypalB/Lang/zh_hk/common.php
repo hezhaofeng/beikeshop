@@ -45,11 +45,16 @@ return [
     'payment_accepted'    => 'PayPal 已接受付款，正在確認收款狀態…',
     'payment_confirming'  => '付款仍在 PayPal 確認中，訂單狀態會在到賬後自動更新。',
     'payment_not_done'    => 'PayPal 付款未能完成。',
+    'success_review_notice' => 'PayPal 已受理您的付款，正在審核中。審核完成前訂單會顯示為待支付，完成後將自動更新，請勿重複付款。',
 
     // 錯誤頁
     'error_title'      => 'PayPal 支付暫不可用',
     'use_wallet'       => '改用 PayPal 錢包付款',
     'back_to_order'    => '返回訂單',
+
+    // 內嵌收口頁
+    'finish_title'     => '正在返回商店',
+    'finish_returning' => '正在帶您返回商店…',
 
     // 收款狀態訊息
     'status_completed'   => 'PayPal 付款已完成。',
@@ -64,17 +69,19 @@ return [
     'capture_failed'     => 'PayPal 收款捕獲失敗，請稍後重試。',
 
     // 支付工作階段相關的買家提示
-    'session_ended'        => '該 PayPal 支付工作階段已經結束，請從原站點重新發起付款。',
-    'session_expired'      => '支付工作階段已過期。',
-    'session_processing'   => '該支付正在處理中，請稍後查詢狀態。',
-    'session_reconciling'  => 'PayPal 建立結果尚未確認，請稍後重試或聯絡商戶處理。',
-    'session_unavailable'  => 'PayPal 授權地址暫不可用，請重新發起付款。',
-    'method_not_enabled'   => '該支付工作階段未啟用此付款方式。',
-    'card_not_enabled'     => '本站目前未啟用信用卡收款。',
-    'wallet_not_enabled'   => '本站目前未啟用 PayPal 錢包收款。',
-    'card_not_supported'   => '目前 PayPal 收款帳號不支援信用卡自動收款。',
-    'card_component_down'  => 'PayPal 信用卡元件暫時不可用，請改用 PayPal 錢包付款。',
-    'capture_token_invalid' => '支付捕獲權杖無效，請從原站點重新發起付款。',
+    'session_ended'           => '該 PayPal 支付工作階段已經結束，請從原站點重新發起付款。',
+    'session_expired'         => '支付工作階段已過期。',
+    'session_processing'      => '該支付正在處理中，請稍後查詢狀態。',
+    'session_reconciling'     => 'PayPal 建立結果尚未確認，請稍後重試或聯絡商戶處理。',
+    'session_unavailable'     => 'PayPal 授權地址暫不可用，請重新發起付款。',
+    'method_not_enabled'      => '該支付工作階段未啟用此付款方式。',
+    'card_not_enabled'        => '本站目前未啟用信用卡收款。',
+    'wallet_not_enabled'      => '本站目前未啟用 PayPal 錢包收款。',
+    'card_not_supported'      => '目前 PayPal 收款帳號不支援信用卡自動收款。',
+    'card_component_down'     => 'PayPal 信用卡元件暫時不可用，請改用 PayPal 錢包付款。',
+    'capture_token_invalid'   => '支付捕獲權杖無效，請從原站點重新發起付款。',
+    'session_capture_pending' => 'PayPal 已受理本次付款，正在等待 PayPal 確認，請勿重複付款；確認後訂單會自動更新。',
+    'capture_declined'        => 'PayPal 拒絕了本次付款，請更換付款方式或聯絡商戶。',
 
     // 政策頁正文
     'contact_title'     => '聯絡我們',
@@ -91,10 +98,12 @@ return [
     'terms_body_2'      => '支付前請閱讀訂單資訊、退款政策、隱私政策和交易條款。',
 
     // B 站自營訂單支付
-    'local_title'              => 'PayPal',
-    'local_subtitle'           => '點擊下方按鈕前往 PayPal 安全支付頁完成付款。付款完成後，訂單狀態會自動更新。',
-    'local_session_notice'     => '支付工作階段有效期為 :minutes 分鐘。請勿在多個頁面同時付款。',
-    'local_pay_now'            => '使用 PayPal 付款',
-    'local_order_not_payable'  => '該訂單目前不能發起 PayPal 支付。',
-    'local_no_method'          => '本站未啟用任何 PayPal 收款方式，請聯絡管理員。',
+    'local_title'                => 'PayPal',
+    'local_subtitle'             => '點擊下方按鈕前往 PayPal 安全支付頁完成付款。付款完成後，訂單狀態會自動更新。',
+    'local_session_notice'       => '支付工作階段有效期為 :minutes 分鐘。請勿在多個頁面同時付款。',
+    'local_pay_now'              => '使用 PayPal 付款',
+    'local_order_not_payable'    => '該訂單目前不能發起 PayPal 支付。',
+    'local_payment_start_failed' => 'PayPal 支付暫時無法發起，請稍後重試或聯絡商家。',
+    'local_no_method'            => '本站未啟用任何 PayPal 收款方式，請聯絡管理員。',
+    'local_pay_with_card'        => '使用信用卡/扣賬卡付款',
 ];
