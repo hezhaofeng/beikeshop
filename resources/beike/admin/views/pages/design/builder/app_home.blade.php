@@ -76,7 +76,7 @@
                 <span>@{{ item.text[source.locale] }}</span>
               </div>
             </div>
-            <div v-if="module.code == 'product' || module.code == 'category' || module.code == 'latest'">
+            <div v-if="module.code == 'product' || module.code == 'category' || module.code == 'latest' || module.code == 'latest_products'">
               <div v-if="module.content.title[source.locale]" class="module-title">@{{ module.content.title[source.locale] }}</div>
               <div v-if="!module.content.products.length" class="hint-right-edit">{{ __('admin/app_builder.module_right_edit') }}</div>
               <div class="product-grid">

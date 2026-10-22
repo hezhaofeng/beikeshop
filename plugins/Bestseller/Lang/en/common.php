@@ -12,5 +12,6 @@
 
 return [
     'module_name'            => 'Bestseller',
+    'latest_products_module_name' => 'Latest Products',
     'limit'                  => 'Limit',
 ];

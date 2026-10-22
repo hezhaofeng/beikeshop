@@ -23,6 +23,7 @@ class Bootstrap
          */
         add_hook_filter('admin.design.index.data', function ($data) {
             $data['editors'][] = 'editor-bestseller';
+            $data['editors'][] = 'editor-latest_products';
 
             return $data;
         });
@@ -36,6 +37,19 @@ class Bootstrap
             if ($module == 'bestseller') {
                 $data['title']    = $data['title'][locale()] ?? '';
                 $data['products'] = ProductRepo::getBestSellerProducts($data['limit']);
+            } elseif ($module == 'latest_products') {
+                $data['title']    = $data['title'][locale()] ?? '';
+                $limit            = max(1, min((int) ($data['limit'] ?? 6), 60));
+                $products         = \Beike\Repositories\ProductRepo::getBuilder([
+                    'active' => 1,
+                    'sort'   => 'products.created_at',
+                    'order'  => 'desc',
+                ])
+                    ->whereHas('masterSku')
+                    ->limit($limit)
+                    ->get();
+
+                $data['products'] = \Beike\Shop\Http\Resources\ProductSimple::collection($products)->jsonSerialize();
             }
 
             return $data;
