@@ -1,10 +1,10 @@
 <?php
 
-namespace Plugin\BestsellerSelector\Controllers;
+namespace Plugin\Bestseller\Controllers;
 
 use Beike\Admin\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use Plugin\BestsellerSelector\Services\BestsellerSelectionService;
+use Plugin\Bestseller\Services\BestsellerSelectionService;
 
 class AdminBestsellerSelectorController extends Controller
 {
@@ -42,7 +42,7 @@ class AdminBestsellerSelectorController extends Controller
         if (array_key_exists('modules', $input)) {
             $data = $request->validate([
                 'modules'                        => 'required|array',
-                'modules.*.mode'                 => 'nullable|in:auto,manual',
+                'modules.*.mode'                 => 'nullable|in:auto,manual,all_time_sales',
                 'modules.*.product_ids'          => 'nullable|array|max:500',
                 'modules.*.product_ids.*'        => 'integer|min:1',
                 'modules.*.tabs'                 => 'nullable|array',
@@ -55,7 +55,7 @@ class AdminBestsellerSelectorController extends Controller
         }
 
         $data = $request->validate([
-            'mode'          => 'nullable|in:auto,manual',
+            'mode'          => 'nullable|in:auto,manual,all_time_sales',
             'product_ids'   => 'nullable|array|max:500',
             'product_ids.*' => 'integer|min:1',
         ]);

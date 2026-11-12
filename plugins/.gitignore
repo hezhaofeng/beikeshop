@@ -1,5 +1,6 @@
 *
 !Bestseller
+!Bestseller/**
 !FlatShipping
 !LatestProducts
 !Openai
@@ -14,8 +15,6 @@
 !GdMigrateImagePaths
 !ProductPositionSort
 !ProductPositionSort/**
-!BestsellerSelector
-!BestsellerSelector/**
 !CyberCloak
 !CyberCloak/**
 !CyberCloakSimple

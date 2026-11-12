@@ -13,11 +13,14 @@
 namespace Plugin\Bestseller;
 
 use Plugin\Bestseller\Repositories\ProductRepo;
+use Plugin\Bestseller\Services\BestsellerSelectionService;
 
 class Bootstrap
 {
     public function boot()
     {
+        app()->singleton(BestsellerSelectionService::class);
+
         /**
          * Add module for admin design.
          */
@@ -54,5 +57,24 @@ class Bootstrap
 
             return $data;
         });
+
+        // 自动取品完成后，按首页模块实例或选项卡应用手动选品。
+        add_hook_filter('service.design.module.content.after', function (array $data): array {
+            if (! in_array(($data['module_code'] ?? ''), ['bestseller', 'product', 'tab_product'], true)) {
+                return $data;
+            }
+
+            return app(BestsellerSelectionService::class)->applyHomepageSelection($data);
+        }, 30);
+
+        // 合并后只有热卖商品插件提供选品入口，避免出现两份相同的编辑页。
+        add_hook_blade('admin.plugin.form.after', function ($callback, $content, array $data = []): string {
+            $plugin = $data['plugin'] ?? null;
+            if (! $plugin || $plugin->code !== 'bestseller') {
+                return (string) $content;
+            }
+
+            return (string) $content . view('Bestseller::admin.selector_panel')->render();
+        }, 20);
     }
 }

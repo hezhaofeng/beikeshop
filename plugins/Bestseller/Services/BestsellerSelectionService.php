@@ -1,6 +1,6 @@
 <?php
 
-namespace Plugin\BestsellerSelector\Services;
+namespace Plugin\Bestseller\Services;
 
 use Beike\Models\CategoryPath;
 use Beike\Repositories\CategoryRepo;
@@ -11,6 +11,9 @@ use Plugin\CyberCloak\Services\CatalogContentMappingService;
 
 class BestsellerSelectionService
 {
+    // 合并插件后保留原设置空间，已有选品无需迁移，旧版保存接口仍写入同一份配置。
+    private const SETTING_SPACE = 'bestseller_selector';
+
     private const SETTING_MODULES = 'modules';
 
     private const SETTING_MODE = 'mode';
@@ -20,6 +23,10 @@ class BestsellerSelectionService
     private const MODE_AUTO = 'auto';
 
     private const MODE_MANUAL = 'manual';
+
+    private const MODE_ALL_TIME_SALES = 'all_time_sales';
+
+    private const SALES_MODULE_CODES = ['bestseller', 'product'];
 
     /**
      * 将后台保存的值统一为正整数 ID，并去重保留首次出现顺序。
@@ -39,9 +46,7 @@ class BestsellerSelectionService
 
     public function mode(): string
     {
-        return plugin_setting('bestseller_selector.' . self::SETTING_MODE, self::MODE_AUTO) === self::MODE_MANUAL
-            ? self::MODE_MANUAL
-            : self::MODE_AUTO;
+        return $this->normalizeMode(plugin_setting(self::SETTING_SPACE . '.' . self::SETTING_MODE, self::MODE_AUTO));
     }
 
     /**
@@ -95,7 +100,7 @@ class BestsellerSelectionService
 
     public function selectedIds(): array
     {
-        return $this->normalizeIds(plugin_setting('bestseller_selector.' . self::SETTING_PRODUCT_IDS, []));
+        return $this->normalizeIds(plugin_setting(self::SETTING_SPACE . '.' . self::SETTING_PRODUCT_IDS, []));
     }
 
     /**
@@ -181,7 +186,7 @@ class BestsellerSelectionService
      */
     public function save(string $mode, array $ids): array
     {
-        $mode = $mode === self::MODE_MANUAL ? self::MODE_MANUAL : self::MODE_AUTO;
+        $mode = $this->normalizeMode($mode);
         $ids  = $this->validSelectedIds($ids);
 
         // 空选项不能启用手动模式，否则首页热卖区会被意外清空。
@@ -189,7 +194,7 @@ class BestsellerSelectionService
             $mode = self::MODE_AUTO;
         }
 
-        SettingRepo::update('plugin', 'bestseller_selector', [
+        SettingRepo::update('plugin', self::SETTING_SPACE, [
             self::SETTING_MODE        => $mode,
             self::SETTING_PRODUCT_IDS => $ids,
         ]);
@@ -212,7 +217,7 @@ class BestsellerSelectionService
             }
 
             $module = $available->get($moduleId);
-            $mode   = ($config['mode'] ?? self::MODE_AUTO) === self::MODE_MANUAL ? self::MODE_MANUAL : self::MODE_AUTO;
+            $mode   = $this->normalizeMode($config['mode'] ?? self::MODE_AUTO, $module['code']);
             $item   = ['mode' => $mode, 'product_ids' => []];
 
             if ($module['code'] === 'tab_product') {
@@ -242,7 +247,9 @@ class BestsellerSelectionService
             $saved[$moduleId] = $item;
         }
 
-        SettingRepo::storeValue(self::SETTING_MODULES, $saved, 'bestseller_selector', 'plugin');
+        SettingRepo::storeValue(self::SETTING_MODULES, $saved, self::SETTING_SPACE, 'plugin');
+        // 当前请求中的配置也同步更新，保存响应才能立即返回刚选择的数据来源模式。
+        config()->set('bk.plugin.' . self::SETTING_SPACE . '.' . self::SETTING_MODULES, $saved);
 
         return $this->state();
     }
@@ -256,9 +263,9 @@ class BestsellerSelectionService
         // 旧版本只有一份热卖配置，映射到首页第一个热卖模块用于平滑升级。
         if ($configs === []) {
             foreach ($this->homepageModules() as $module) {
-                if ($module['code'] === 'bestseller' && $this->mode() === self::MODE_MANUAL) {
+                if ($module['code'] === 'bestseller' && $this->mode() !== self::MODE_AUTO) {
                     $configs[$module['id']] = [
-                        'mode'        => self::MODE_MANUAL,
+                        'mode'        => $this->mode(),
                         'product_ids' => $this->selectedIds(),
                     ];
 
@@ -270,7 +277,7 @@ class BestsellerSelectionService
         foreach ($this->homepageModules() as $module) {
             $config = $configs[$module['id']] ?? ['mode' => self::MODE_AUTO, 'product_ids' => []];
             $state  = [
-                'mode'        => $config['mode'] ?? self::MODE_AUTO,
+                'mode'        => $this->normalizeMode($config['mode'] ?? self::MODE_AUTO, $module['code']),
                 'product_ids' => $this->normalizeIds($config['product_ids'] ?? []),
                 'products'    => $this->productsByIds($config['product_ids'] ?? []),
             ];
@@ -310,9 +317,20 @@ class BestsellerSelectionService
      */
     public function applyHomepageSelection(array $data): array
     {
-        $moduleId = trim((string) ($data['module_id'] ?? ''));
-        $configs  = $this->moduleConfigs();
-        $config   = $configs[$moduleId] ?? null;
+        $moduleCode = (string) ($data['module_code'] ?? '');
+        $moduleId   = trim((string) ($data['module_id'] ?? ''));
+        $configs    = $this->moduleConfigs();
+        $config     = $configs[$moduleId] ?? null;
+        // 旧版全局模式仅兼容热卖模块，普通商品模块必须按实例显式启用。
+        $mode = is_array($config)
+            ? $this->normalizeMode($config['mode'] ?? self::MODE_AUTO, $moduleCode)
+            : ($moduleCode === 'bestseller' ? $this->mode() : self::MODE_AUTO);
+        if (in_array($moduleCode, self::SALES_MODULE_CODES, true)
+            && $mode === self::MODE_ALL_TIME_SALES) {
+            $data['products'] = app(AllTimeSalesService::class)->products((int) ($data['limit'] ?? 8));
+
+            return $data;
+        }
         if (! is_array($config)) {
             // 兼容插件升级前的单一热卖配置。
             if (($data['module_code'] ?? '') === 'bestseller' && $this->mode() === self::MODE_MANUAL) {
@@ -345,9 +363,18 @@ class BestsellerSelectionService
      */
     private function moduleConfigs(): array
     {
-        $value = plugin_setting('bestseller_selector.' . self::SETTING_MODULES, []);
+        $value = plugin_setting(self::SETTING_SPACE . '.' . self::SETTING_MODULES, []);
 
         return is_array($value) ? $value : [];
+    }
+
+    private function normalizeMode(mixed $mode, string $moduleCode = 'bestseller'): string
+    {
+        if ($mode === self::MODE_ALL_TIME_SALES && in_array($moduleCode, self::SALES_MODULE_CODES, true)) {
+            return self::MODE_ALL_TIME_SALES;
+        }
+
+        return $mode === self::MODE_MANUAL ? self::MODE_MANUAL : self::MODE_AUTO;
     }
 
     private function moduleCodeLabel(string $code): string

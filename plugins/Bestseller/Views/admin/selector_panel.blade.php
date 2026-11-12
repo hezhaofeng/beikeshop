@@ -46,9 +46,10 @@
       <label class="form-label" for="bestseller-selector-mode">首页数据来源</label>
       <select id="bestseller-selector-mode" class="form-select" data-field="mode">
         <option value="auto">自动：使用模块原配置</option>
+        <option value="all_time_sales">全部时间销量：按历史有效订单销售件数排名</option>
         <option value="manual">手动：使用本页已选商品</option>
       </select>
-      <div class="form-text">手动模式按选中顺序展示；自动模式保留热卖模块销量逻辑或其他模块原有商品配置。</div>
+      <div class="form-text" data-field="mode-help">请先选择首页商品模块；全部时间销量适用于热卖商品和商品模块。</div>
     </div>
     <div class="col-lg-4 d-flex align-items-end">
       <button type="button" class="btn btn-primary w-100" data-action="save">
@@ -192,7 +193,7 @@
           if (!module) return;
 
           const config = {
-            mode: source.mode === 'manual' ? 'manual' : 'auto',
+            mode: normalizeMode(source.mode, module),
             product_ids: Array.from(new Set((source.product_ids || []).map(Number).filter(function (id) { return id > 0; }))),
           };
           if (module.code === 'tab_product') {
@@ -240,7 +241,33 @@
       }
 
       function renderMode() {
-        panel.find('[data-field="mode"]').val(currentConfig().mode || 'auto');
+        const module = activeModule();
+        const select = panel.find('[data-field="mode"]');
+        const supportsSales = supportsAllTimeSales(module);
+        select.find('option[value="all_time_sales"]').prop('hidden', false).prop('disabled', !supportsSales);
+        select.val(normalizeMode(currentConfig().mode, module));
+        panel.find('[data-field="mode-help"]').text(!module
+          ? '请先选择首页商品模块；全部时间销量适用于热卖商品和商品模块。'
+          : (supportsSales
+            ? (module.code === 'product'
+              ? '全部时间销量统计已支付、已发货、已完成订单的销售件数，默认展示销量前 8 个商品；手动模式按已选顺序展示。'
+              : '全部时间销量统计已支付、已发货、已完成订单的销售件数，展示数量沿用装修设置；手动模式按已选顺序展示。')
+            : '当前模块支持自动和手动选品；如需使用全部时间销量，请在上方切换到热卖商品或商品模块。'));
+      }
+
+      function initialModule() {
+        return state.homepageModules.find(function (module) { return String(module.id) === state.activeModuleId; })
+          || state.homepageModules.find(function (module) { return module.code === 'bestseller'; })
+          || state.homepageModules[0];
+      }
+
+      function normalizeMode(mode, module) {
+        if (mode === 'all_time_sales' && supportsAllTimeSales(module)) return 'all_time_sales';
+        return mode === 'manual' ? 'manual' : 'auto';
+      }
+
+      function supportsAllTimeSales(module) {
+        return !!module && ['bestseller', 'product'].includes(module.code);
       }
 
       function renderCategories() {
@@ -403,7 +430,7 @@
             message('首页暂未配置商品、热卖或选项卡商品模块', 'warning');
             return;
           }
-          state.activeModuleId = String(state.homepageModules[0].id);
+          state.activeModuleId = String(initialModule().id);
           state.activeTabIndex = '';
           state.selectedProducts = {};
           rememberModuleProducts(state.moduleConfigs);
@@ -478,7 +505,7 @@
       });
 
       panel.on('change', '[data-field="mode"]', function () {
-        currentConfig().mode = $(this).val() === 'manual' ? 'manual' : 'auto';
+        currentConfig().mode = normalizeMode($(this).val(), activeModule());
       });
 
       $(document).on('mousedown.bestsellerSelectorCategory', function (event) {
@@ -496,6 +523,7 @@
           setCurrentIds(ids);
           // 勾选商品即表示当前模块/选项卡使用人工选品，避免保存后仍停留在自动模式。
           currentConfig().mode = 'manual';
+          renderMode();
           if (product) state.selectedProducts[id] = product;
         } else {
           setCurrentIds(currentIds().filter(function (item) { return item !== id; }));

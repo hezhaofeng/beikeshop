@@ -1,15 +1,15 @@
 {
     "code": "bestseller",
     "name": {
-        "zh_cn": "热卖商品模块",
-        "en": "Hot Items Module"
+        "zh_cn": "热卖商品模块与批量选品",
+        "en": "Hot Items Module & Product Selector"
     },
     "description": {
-        "zh_cn": "首页装修热卖商品模块",
-        "en": "Home Decoration Hot Products Module"
+        "zh_cn": "首页装修热卖、最新商品模块，支持批量选品，热卖和商品模块均可按全部时间订单销量展示商品。",
+        "en": "Homepage bestseller and latest product modules, with bulk selection and all-time sales ranking for bestseller and product modules."
     },
     "type": "feature",
-    "version": "v1.0.0",
+    "version": "v1.2.2",
     "icon": "/image/logo.png",
     "author": {
         "name": "成都光大网络科技有限公司",
